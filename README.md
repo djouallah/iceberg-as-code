@@ -60,6 +60,10 @@ Source data arrives at 5-minute resolution. The Iceberg tables store everything 
 - **GitHub Pages file size limit: 100 MB.** The DuckDB files served via GitHub Pages must stay under this limit, which constrains how much historical data the dashboard can hold.
 - **DuckDB-WASM is single-threaded per origin.** Browsers enforce a single-origin policy, so WASM runs on a single thread. We use the native DuckDB file format (not Parquet) because DuckDB-WASM can query its own format efficiently even under this constraint — range requests, predicate pushdown, and columnar reads all work without needing to load the entire file into memory.
 
+## Fabric Version
+
+The same approach — dbt-duckdb transforming data — has been applied on [Microsoft Fabric](https://github.com/djouallah/dbt). Instead of Iceberg, it uses **DuckLake** (SQLite metadata) with tables exported as **Delta Lake** to OneLake. Visualization and semantic modeling are handled by **Power BI** via a deployed `.bim` semantic model, replacing the DuckDB-WASM dashboard used here.
+
 ## Setup
 
 ### Environment Variables
