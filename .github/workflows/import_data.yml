@@ -1,0 +1,115 @@
+name: Import Data
+
+on:
+  schedule:
+    - cron: '0 20 * * *'  # 6am AEST (UTC+10) — daily full refresh
+  workflow_run:
+    workflows: ["Process Data"]
+    types: [completed]
+  workflow_dispatch:  # manual = daily (full refresh)
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+permissions:
+  contents: write
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: >-
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    env:
+      ICEBERG_REST_ENDPOINT: ${{ secrets.ICEBERG_REST_ENDPOINT }}
+      ICEBERG_TOKEN: ${{ secrets.ICEBERG_TOKEN }}
+      ICEBERG_WAREHOUSE: ${{ secrets.ICEBERG_WAREHOUSE }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set mode
+        id: mode
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+            echo "is_daily=false" >> $GITHUB_OUTPUT
+          else
+            echo "is_daily=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Install dependencies
+        run: |
+          if [ "${{ steps.mode.outputs.is_daily }}" = "true" ]; then
+            pip install duckdb dbt-duckdb
+          else
+            pip install duckdb
+          fi
+
+      - name: Test data
+        if: steps.mode.outputs.is_daily == 'true'
+        run: dbt test --target prod --profiles-dir .
+
+      - name: Export fct_scada
+        if: steps.mode.outputs.is_daily == 'true'
+        run: python scripts/cache_catalog.py export_scada
+
+      - name: Export fct_price
+        if: steps.mode.outputs.is_daily == 'true'
+        run: python scripts/cache_catalog.py export_price
+
+      - name: Export dim_duid
+        if: steps.mode.outputs.is_daily == 'true'
+        run: python scripts/cache_catalog.py export_dim_duid
+
+      - name: Export dim_calendar
+        if: steps.mode.outputs.is_daily == 'true'
+        run: python scripts/cache_catalog.py export_dim_calendar
+
+      - name: Build energy_daily.duckdb
+        if: steps.mode.outputs.is_daily == 'true'
+        run: python scripts/cache_catalog.py build_daily
+
+      - name: Export fct_scada_today
+        run: python scripts/cache_catalog.py export_scada_today
+
+      - name: Export fct_price_today
+        run: python scripts/cache_catalog.py export_price_today
+
+      - name: Build energy_today.duckdb
+        run: python scripts/cache_catalog.py build_today
+
+      - name: Upload to GitHub Release (daily)
+        if: steps.mode.outputs.is_daily == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete data --yes || true
+          gh release create data dashboard/energy_daily.duckdb dashboard/energy_today.duckdb --title "Data" --notes "Auto-updated energy database"
+
+      - name: Upload to GitHub Release (intraday)
+        if: steps.mode.outputs.is_daily == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload data dashboard/energy_today.duckdb --clobber || true
+
+      - name: Deploy to GitHub Pages (daily)
+        if: steps.mode.outputs.is_daily == 'true'
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./dashboard
+          force_orphan: true
+
+      - name: Deploy to GitHub Pages (intraday)
+        if: steps.mode.outputs.is_daily == 'false'
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./dashboard
+          keep_files: true
