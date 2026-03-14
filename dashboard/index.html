@@ -260,6 +260,9 @@
       return { source: cachedTag ? 'opfs-refresh' : 'opfs-miss' };
     }
 
+    let _db = null;
+    let _baseUrl = '';
+
     async function initDuckDB() {
       setStatus("Loading DuckDB WASM...");
       const JSDELIVR_BUNDLES = duckdb.getJsDelivrBundles();
@@ -269,40 +272,44 @@
       );
       const worker = new Worker(workerUrl);
       const logger = new duckdb.ConsoleLogger();
-      const db = new duckdb.AsyncDuckDB(logger, worker);
-      await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
+      _db = new duckdb.AsyncDuckDB(logger, worker);
+      await _db.instantiate(bundle.mainModule, bundle.pthreadWorker);
       URL.revokeObjectURL(workerUrl);
 
-      conn = await db.connect();
+      conn = await _db.connect();
+      _baseUrl = window.location.href.replace(/\/[^/]*$/, "");
 
-      setStatus("Loading database...");
-      const baseUrl = window.location.href.replace(/\/[^/]*$/, "");
-
-      // Fetch manifest to discover year files
-      const manifest = await (await fetch(`${baseUrl}/daily_manifest.json`)).json();
-      loadedYears = manifest.years;
-
-      // Cache all databases in OPFS in parallel
-      const sourceLabel = { 'opfs-hit': 'cached', 'opfs-miss': 'downloaded + cached', 'opfs-refresh': 'refreshed cache' };
-      const cacheJobs = [
-        cacheInOPFS(db, `${baseUrl}/energy_dim.duckdb`, 'energy_dim.duckdb'),
-        cacheInOPFS(db, `${baseUrl}/energy_today.duckdb`, 'energy_today.duckdb'),
-        ...loadedYears.map(y => cacheInOPFS(db, `${baseUrl}/energy_data_${y}.duckdb`, `energy_data_${y}.duckdb`)),
-      ];
-      const results = await Promise.all(cacheJobs);
-
-      // ATTACH all databases
+      // Phase 1: Load dim + today (enough for default "Last 3 days" view)
+      setStatus("Loading today's data...");
+      const [dimResult, todayResult] = await Promise.all([
+        cacheInOPFS(_db, `${_baseUrl}/energy_dim.duckdb`, 'energy_dim.duckdb'),
+        cacheInOPFS(_db, `${_baseUrl}/energy_today.duckdb`, 'energy_today.duckdb'),
+      ]);
       await conn.query("ATTACH 'energy_dim.duckdb' AS dim (READ_ONLY);");
       await conn.query("ATTACH 'energy_today.duckdb' AS today (READ_ONLY);");
+      await conn.query("SET TimeZone = 'Australia/Brisbane';");
+
+      const sourceLabel = { 'opfs-hit': 'cached', 'opfs-miss': 'downloaded', 'opfs-refresh': 'refreshed' };
+      console.log(`[OPFS] dim: ${sourceLabel[dimResult.source]}, today: ${sourceLabel[todayResult.source]}`);
+      setStatus("Connected", "connected");
+    }
+
+    async function loadYearDatabases() {
+      const manifest = await (await fetch(`${_baseUrl}/daily_manifest.json`)).json();
+      loadedYears = manifest.years;
+      console.log(`[OPFS] Loading year databases: ${loadedYears.join(', ')}...`);
+
+      const sourceLabel = { 'opfs-hit': 'cached', 'opfs-miss': 'downloaded', 'opfs-refresh': 'refreshed' };
+      const results = await Promise.all(
+        loadedYears.map(y => cacheInOPFS(_db, `${_baseUrl}/energy_data_${y}.duckdb`, `energy_data_${y}.duckdb`))
+      );
       for (const y of loadedYears) {
         await conn.query(`ATTACH 'energy_data_${y}.duckdb' AS y${y} (READ_ONLY);`);
       }
-
-      await conn.query("SET TimeZone = 'Australia/Brisbane';");
-
-      for (const r of results) console.log(`[OPFS] ${sourceLabel[r.source]}`);
-      console.log(`[OPFS] Loaded years: ${loadedYears.join(', ')}`);
-      setStatus("Connected", "connected");
+      for (let i = 0; i < loadedYears.length; i++) {
+        console.log(`[OPFS] y${loadedYears[i]}: ${sourceLabel[results[i].source]}`);
+      }
+      console.log(`[OPFS] All year databases loaded`);
     }
 
     async function runQuery(sqlStr) {
@@ -395,34 +402,34 @@
       // --- UNION ALL builders across year databases ---
       // Raw 5-min grain (for CSV export)
       _scadaRawUnion() {
-        const parts = loadedYears.map(y => `SELECT DUID, date, time, mw FROM y${y}.scada WHERE date < CURRENT_DATE - INTERVAL 1 DAY`);
-        parts.push(`SELECT DUID, date, time, mw FROM today.scada_today WHERE date >= CURRENT_DATE - INTERVAL 1 DAY`);
+        const parts = loadedYears.map(y => `SELECT DUID, date, time, mw FROM y${y}.scada WHERE date < CURRENT_DATE - INTERVAL 5 DAY`);
+        parts.push(`SELECT DUID, date, time, mw FROM today.scada_today WHERE date >= CURRENT_DATE - INTERVAL 5 DAY`);
         return parts.join('\n            UNION ALL\n            ');
       },
 
       _priceRawUnion() {
-        const parts = loadedYears.map(y => `SELECT REGIONID, date, time, price FROM y${y}.price WHERE date < CURRENT_DATE - INTERVAL 1 DAY`);
-        parts.push(`SELECT REGIONID, date, time, price FROM today.price_today WHERE date >= CURRENT_DATE - INTERVAL 1 DAY`);
+        const parts = loadedYears.map(y => `SELECT REGIONID, date, time, price FROM y${y}.price WHERE date < CURRENT_DATE - INTERVAL 5 DAY`);
+        parts.push(`SELECT REGIONID, date, time, price FROM today.price_today WHERE date >= CURRENT_DATE - INTERVAL 5 DAY`);
         return parts.join('\n            UNION ALL\n            ');
       },
 
       // Hourly aggregated (for charts when >7d)
       _scadaHourlyUnion() {
         const parts = loadedYears.map(y =>
-          `SELECT DUID, date, CAST(CAST(time / 100 AS INTEGER) * 100 AS SMALLINT) AS time, CAST(SUM(mw) / 12.0 AS REAL) AS mwh FROM y${y}.scada WHERE date < CURRENT_DATE - INTERVAL 1 DAY GROUP BY DUID, date, CAST(time / 100 AS INTEGER)`
+          `SELECT DUID, date, CAST(CAST(time / 100 AS INTEGER) * 100 AS SMALLINT) AS time, CAST(SUM(mw) / 12.0 AS REAL) AS mwh FROM y${y}.scada WHERE date < CURRENT_DATE - INTERVAL 5 DAY GROUP BY DUID, date, CAST(time / 100 AS INTEGER)`
         );
         parts.push(
-          `SELECT DUID, date, CAST(CAST(time / 100 AS INTEGER) * 100 AS SMALLINT) AS time, CAST(SUM(mw) / 12.0 AS REAL) AS mwh FROM today.scada_today WHERE date >= CURRENT_DATE - INTERVAL 1 DAY GROUP BY DUID, date, CAST(time / 100 AS INTEGER)`
+          `SELECT DUID, date, CAST(CAST(time / 100 AS INTEGER) * 100 AS SMALLINT) AS time, CAST(SUM(mw) / 12.0 AS REAL) AS mwh FROM today.scada_today WHERE date >= CURRENT_DATE - INTERVAL 5 DAY GROUP BY DUID, date, CAST(time / 100 AS INTEGER)`
         );
         return parts.join('\n            UNION ALL\n            ');
       },
 
       _priceHourlyUnion() {
         const parts = loadedYears.map(y =>
-          `SELECT REGIONID, date, CAST(CAST(time / 100 AS INTEGER) * 100 AS SMALLINT) AS time, AVG(price) AS price FROM y${y}.price WHERE date < CURRENT_DATE - INTERVAL 1 DAY GROUP BY REGIONID, date, CAST(time / 100 AS INTEGER)`
+          `SELECT REGIONID, date, CAST(CAST(time / 100 AS INTEGER) * 100 AS SMALLINT) AS time, AVG(price) AS price FROM y${y}.price WHERE date < CURRENT_DATE - INTERVAL 5 DAY GROUP BY REGIONID, date, CAST(time / 100 AS INTEGER)`
         );
         parts.push(
-          `SELECT REGIONID, date, CAST(CAST(time / 100 AS INTEGER) * 100 AS SMALLINT) AS time, AVG(price) AS price FROM today.price_today WHERE date >= CURRENT_DATE - INTERVAL 1 DAY GROUP BY REGIONID, date, CAST(time / 100 AS INTEGER)`
+          `SELECT REGIONID, date, CAST(CAST(time / 100 AS INTEGER) * 100 AS SMALLINT) AS time, AVG(price) AS price FROM today.price_today WHERE date >= CURRENT_DATE - INTERVAL 5 DAY GROUP BY REGIONID, date, CAST(time / 100 AS INTEGER)`
         );
         return parts.join('\n            UNION ALL\n            ');
       },
@@ -939,6 +946,8 @@
       await initDuckDB();
       await populateFilters();
       await renderAll();
+      // Load year databases in background, then silently refresh
+      loadYearDatabases().then(() => renderAll()).catch(e => console.warn('[OPFS] Year load failed:', e));
     } catch (e) {
       setStatus("Error: " + e.message, "error");
       console.error(e);
