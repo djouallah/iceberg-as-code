@@ -98,6 +98,9 @@ jobs:
         run: |
           gh release upload data dashboard/energy_today.duckdb --clobber || true
 
+      - name: Remove duckdb files before Pages deploy
+        run: rm -f dashboard/*.duckdb
+
       - name: Deploy to GitHub Pages (daily)
         if: steps.mode.outputs.is_daily == 'true'
         uses: peaceiris/actions-gh-pages@v4
