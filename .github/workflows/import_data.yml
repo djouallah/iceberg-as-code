@@ -72,11 +72,19 @@ jobs:
         if: steps.mode.outputs.is_daily == 'true'
         run: python scripts/cache_catalog.py build_dim
 
+      - name: Stage data for deploy
+        run: |
+          mkdir -p deploy_data/data
+          cp dashboard/energy_today.duckdb deploy_data/data/
+          cp dashboard/metadata.json deploy_data/data/
+          if [ "${{ steps.mode.outputs.is_daily }}" = "true" ]; then
+            cp dashboard/energy_dim.duckdb deploy_data/data/
+          fi
       - name: Deploy to GitHub Pages (today + dims)
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./dashboard
+          publish_dir: ./deploy_data
           keep_files: true
 
       - name: Upload to GitHub Release (today + dims)
@@ -118,10 +126,16 @@ jobs:
         run: |
           gh release upload data dashboard/energy_data_*.duckdb --clobber
 
+      - name: Stage data for deploy (daily)
+        if: steps.mode.outputs.is_daily == 'true'
+        run: |
+          mkdir -p deploy_daily/data
+          cp dashboard/energy_data_*.duckdb deploy_daily/data/
+          cp dashboard/daily_manifest.json deploy_daily/data/
       - name: Deploy to GitHub Pages (daily)
         if: steps.mode.outputs.is_daily == 'true'
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./dashboard
+          publish_dir: ./deploy_daily
           keep_files: true
