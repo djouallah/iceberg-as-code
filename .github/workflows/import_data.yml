@@ -87,21 +87,6 @@ jobs:
           publish_dir: ./deploy_data
           keep_files: true
 
-      - name: Upload to GitHub Release (today + dims)
-        if: steps.mode.outputs.is_daily == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release delete data --yes || true
-          gh release create data dashboard/energy_today.duckdb dashboard/energy_dim.duckdb --title "Data" --notes "Auto-updated energy database"
-
-      - name: Upload to GitHub Release (today only)
-        if: steps.mode.outputs.is_daily != 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release upload data dashboard/energy_today.duckdb --clobber
-
       # --- Phase 2: Daily full refresh (slow) ---
       - name: Test data
         if: steps.mode.outputs.is_daily == 'true'
@@ -118,13 +103,6 @@ jobs:
       - name: Build daily databases
         if: steps.mode.outputs.is_daily == 'true'
         run: python scripts/cache_catalog.py build_daily
-
-      - name: Upload to GitHub Release (daily)
-        if: steps.mode.outputs.is_daily == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release upload data dashboard/energy_data_*.duckdb --clobber
 
       - name: Stage data for deploy (daily)
         if: steps.mode.outputs.is_daily == 'true'
