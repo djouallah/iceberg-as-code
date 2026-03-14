@@ -23,7 +23,7 @@ TOKEN = os.environ["ICEBERG_TOKEN"]
 WAREHOUSE = os.environ["ICEBERG_WAREHOUSE"]
 
 DASHBOARD_DIR = os.path.join(os.path.dirname(__file__), "..", "dashboard")
-DB_DAILY_PATH = os.path.join(DASHBOARD_DIR, "energy_daily.duckdb")
+DB_DIM_PATH = os.path.join(DASHBOARD_DIR, "energy_dim.duckdb")
 DB_TODAY_PATH = os.path.join(DASHBOARD_DIR, "energy_today.duckdb")
 os.makedirs(DASHBOARD_DIR, exist_ok=True)
 
@@ -43,11 +43,11 @@ def export_scada():
     con.execute(f"""
         COPY (
             SELECT DUID, CAST(SETTLEMENTDATE AS DATE) AS date,
-                CAST(EXTRACT(HOUR FROM SETTLEMENTDATE) * 100 AS SMALLINT) AS time,
-                CAST(SUM(INITIALMW) / 12.0 AS REAL) AS mwh
+                CAST(strftime(SETTLEMENTDATE, '%H%M') AS SMALLINT) AS time,
+                CAST(ANY_VALUE(INITIALMW) AS REAL) AS mw
             FROM catalog.landing.fct_scada
             WHERE INTERVENTION = 0 AND INITIALMW <> 0
-            GROUP BY DUID, CAST(SETTLEMENTDATE AS DATE), EXTRACT(HOUR FROM SETTLEMENTDATE)
+            GROUP BY DUID, CAST(SETTLEMENTDATE AS DATE), strftime(SETTLEMENTDATE, '%H%M')
         ) TO '{DASHBOARD_DIR}/fct_scada.parquet' (FORMAT PARQUET);
     """)
     con.close()
@@ -58,11 +58,11 @@ def export_price():
     con.execute(f"""
         COPY (
             SELECT REGIONID, CAST(SETTLEMENTDATE AS DATE) AS date,
-                CAST(EXTRACT(HOUR FROM SETTLEMENTDATE) * 100 AS SMALLINT) AS time,
-                CAST(AVG(RRP) AS REAL) AS price
+                CAST(strftime(SETTLEMENTDATE, '%H%M') AS SMALLINT) AS time,
+                CAST(ANY_VALUE(RRP) AS REAL) AS price
             FROM catalog.landing.fct_price
             WHERE INTERVENTION = 0
-            GROUP BY REGIONID, CAST(SETTLEMENTDATE AS DATE), EXTRACT(HOUR FROM SETTLEMENTDATE)
+            GROUP BY REGIONID, CAST(SETTLEMENTDATE AS DATE), strftime(SETTLEMENTDATE, '%H%M')
         ) TO '{DASHBOARD_DIR}/fct_price.parquet' (FORMAT PARQUET);
     """)
     con.close()
@@ -123,22 +123,60 @@ def export_dim_calendar():
 
 
 def build_daily():
-    if os.path.exists(DB_DAILY_PATH):
-        os.remove(DB_DAILY_PATH)
+    # Clean old files
+    for f in os.listdir(DASHBOARD_DIR):
+        if f.startswith("energy_data_") or f in ("energy_daily.duckdb", "energy_dim.duckdb"):
+            os.remove(os.path.join(DASHBOARD_DIR, f))
 
-    con = duckdb.connect(DB_DAILY_PATH)
-    con.execute(f"CREATE TABLE scada AS SELECT * FROM '{DASHBOARD_DIR}/fct_scada.parquet' ORDER BY DUID, date, time")
-    con.execute(f"CREATE TABLE price AS SELECT * FROM '{DASHBOARD_DIR}/fct_price.parquet' ORDER BY REGIONID, date, time")
-    con.execute(f"CREATE TABLE dim_duid AS SELECT * FROM '{DASHBOARD_DIR}/dim_duid.parquet'")
-    con.execute(f"CREATE TABLE dim_calendar AS SELECT * FROM '{DASHBOARD_DIR}/dim_calendar.parquet'")
-    con.close()
+    con = duckdb.connect(":memory:")
 
+    # Get distinct years from scada data
+    years = [
+        r[0]
+        for r in con.execute(
+            f"SELECT DISTINCT EXTRACT(YEAR FROM date)::INTEGER AS year FROM '{DASHBOARD_DIR}/fct_scada.parquet' ORDER BY year"
+        ).fetchall()
+    ]
+
+    # Build per-year files with scada + price
+    for year in years:
+        path = os.path.join(DASHBOARD_DIR, f"energy_data_{year}.duckdb")
+        ycon = duckdb.connect(path)
+        ycon.execute(f"""
+            CREATE TABLE scada AS
+            SELECT * FROM '{DASHBOARD_DIR}/fct_scada.parquet'
+            WHERE EXTRACT(YEAR FROM date) = {year}
+            ORDER BY DUID, date, time
+        """)
+        ycon.execute(f"""
+            CREATE TABLE price AS
+            SELECT * FROM '{DASHBOARD_DIR}/fct_price.parquet'
+            WHERE EXTRACT(YEAR FROM date) = {year}
+            ORDER BY REGIONID, date, time
+        """)
+        ycon.close()
+        size_mb = os.path.getsize(path) / 1024 / 1024
+        print(f"Built {path} ({size_mb:.1f} MB)")
+
+    # Build dim file
+    dcon = duckdb.connect(DB_DIM_PATH)
+    dcon.execute(f"CREATE TABLE dim_duid AS SELECT * FROM '{DASHBOARD_DIR}/dim_duid.parquet'")
+    dcon.execute(f"CREATE TABLE dim_calendar AS SELECT * FROM '{DASHBOARD_DIR}/dim_calendar.parquet'")
+    dcon.close()
+    print(f"Built {DB_DIM_PATH}")
+
+    # Write manifest
+    with open(os.path.join(DASHBOARD_DIR, "daily_manifest.json"), "w") as f:
+        json.dump({"years": years}, f)
+    print(f"Manifest: {years}")
+
+    # Clean up parquet intermediates
     for f in ["fct_scada.parquet", "fct_price.parquet", "dim_duid.parquet", "dim_calendar.parquet"]:
         path = os.path.join(DASHBOARD_DIR, f)
         if os.path.exists(path):
             os.remove(path)
 
-    print(f"Built {DB_DAILY_PATH}")
+    con.close()
 
 
 def build_today():

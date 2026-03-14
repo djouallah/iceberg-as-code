@@ -70,7 +70,7 @@ jobs:
         if: steps.mode.outputs.is_daily == 'true'
         run: python scripts/cache_catalog.py export_dim_calendar
 
-      - name: Build energy_daily.duckdb
+      - name: Build daily databases (per-year scada + dims)
         if: steps.mode.outputs.is_daily == 'true'
         run: python scripts/cache_catalog.py build_daily
 
@@ -89,7 +89,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release delete data --yes || true
-          gh release create data dashboard/energy_daily.duckdb dashboard/energy_today.duckdb --title "Data" --notes "Auto-updated energy database"
+          gh release create data dashboard/energy_dim.duckdb dashboard/energy_data_*.duckdb dashboard/energy_today.duckdb --title "Data" --notes "Auto-updated energy database"
 
       - name: Upload to GitHub Release (intraday)
         if: steps.mode.outputs.is_daily == 'false'

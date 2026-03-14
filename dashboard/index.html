@@ -174,6 +174,7 @@
     }
 
     const crossFilter = { fuel: null, region: null, duids: [] };
+    let loadedYears = [];
     let _renderSeq = 0;
 
     function updateFilterTags() {
@@ -277,18 +278,30 @@
       setStatus("Loading database...");
       const baseUrl = window.location.href.replace(/\/[^/]*$/, "");
 
-      // Cache both databases in OPFS
-      const [daily, today] = await Promise.all([
-        cacheInOPFS(db, `${baseUrl}/energy_daily.duckdb`, 'energy_daily.duckdb'),
+      // Fetch manifest to discover year files
+      const manifest = await (await fetch(`${baseUrl}/daily_manifest.json`)).json();
+      loadedYears = manifest.years;
+
+      // Cache all databases in OPFS in parallel
+      const sourceLabel = { 'opfs-hit': 'cached', 'opfs-miss': 'downloaded + cached', 'opfs-refresh': 'refreshed cache' };
+      const cacheJobs = [
+        cacheInOPFS(db, `${baseUrl}/energy_dim.duckdb`, 'energy_dim.duckdb'),
         cacheInOPFS(db, `${baseUrl}/energy_today.duckdb`, 'energy_today.duckdb'),
-      ]);
-      await conn.query("ATTACH 'energy_daily.duckdb' AS db (READ_ONLY);");
+        ...loadedYears.map(y => cacheInOPFS(db, `${baseUrl}/energy_data_${y}.duckdb`, `energy_data_${y}.duckdb`)),
+      ];
+      const results = await Promise.all(cacheJobs);
+
+      // ATTACH all databases
+      await conn.query("ATTACH 'energy_dim.duckdb' AS dim (READ_ONLY);");
       await conn.query("ATTACH 'energy_today.duckdb' AS today (READ_ONLY);");
+      for (const y of loadedYears) {
+        await conn.query(`ATTACH 'energy_data_${y}.duckdb' AS y${y} (READ_ONLY);`);
+      }
 
       await conn.query("SET TimeZone = 'Australia/Brisbane';");
 
-      const sourceLabel = { 'opfs-hit': 'cached', 'opfs-miss': 'downloaded + cached', 'opfs-refresh': 'refreshed cache' };
-      console.log(`[OPFS] Daily DB: ${sourceLabel[daily.source]}, Today DB: ${sourceLabel[today.source]}`);
+      for (const r of results) console.log(`[OPFS] ${sourceLabel[r.source]}`);
+      console.log(`[OPFS] Loaded years: ${loadedYears.join(', ')}`);
       setStatus("Connected", "connected");
     }
 
@@ -379,34 +392,65 @@
     // =========================================================================
 
     const sql = {
+      // --- UNION ALL builders across year databases ---
+      // Raw 5-min grain (for CSV export)
+      _scadaRawUnion() {
+        const parts = loadedYears.map(y => `SELECT DUID, date, time, mw FROM y${y}.scada WHERE date < CURRENT_DATE - INTERVAL 1 DAY`);
+        parts.push(`SELECT DUID, date, time, mw FROM today.scada_today WHERE date >= CURRENT_DATE - INTERVAL 1 DAY`);
+        return parts.join('\n            UNION ALL\n            ');
+      },
+
+      _priceRawUnion() {
+        const parts = loadedYears.map(y => `SELECT REGIONID, date, time, price FROM y${y}.price WHERE date < CURRENT_DATE - INTERVAL 1 DAY`);
+        parts.push(`SELECT REGIONID, date, time, price FROM today.price_today WHERE date >= CURRENT_DATE - INTERVAL 1 DAY`);
+        return parts.join('\n            UNION ALL\n            ');
+      },
+
+      // Hourly aggregated (for charts when >7d)
+      _scadaHourlyUnion() {
+        const parts = loadedYears.map(y =>
+          `SELECT DUID, date, CAST(CAST(time / 100 AS INTEGER) * 100 AS SMALLINT) AS time, CAST(SUM(mw) / 12.0 AS REAL) AS mwh FROM y${y}.scada WHERE date < CURRENT_DATE - INTERVAL 1 DAY GROUP BY DUID, date, CAST(time / 100 AS INTEGER)`
+        );
+        parts.push(
+          `SELECT DUID, date, CAST(CAST(time / 100 AS INTEGER) * 100 AS SMALLINT) AS time, CAST(SUM(mw) / 12.0 AS REAL) AS mwh FROM today.scada_today WHERE date >= CURRENT_DATE - INTERVAL 1 DAY GROUP BY DUID, date, CAST(time / 100 AS INTEGER)`
+        );
+        return parts.join('\n            UNION ALL\n            ');
+      },
+
+      _priceHourlyUnion() {
+        const parts = loadedYears.map(y =>
+          `SELECT REGIONID, date, CAST(CAST(time / 100 AS INTEGER) * 100 AS SMALLINT) AS time, AVG(price) AS price FROM y${y}.price WHERE date < CURRENT_DATE - INTERVAL 1 DAY GROUP BY REGIONID, date, CAST(time / 100 AS INTEGER)`
+        );
+        parts.push(
+          `SELECT REGIONID, date, CAST(CAST(time / 100 AS INTEGER) * 100 AS SMALLINT) AS time, AVG(price) AS price FROM today.price_today WHERE date >= CURRENT_DATE - INTERVAL 1 DAY GROUP BY REGIONID, date, CAST(time / 100 AS INTEGER)`
+        );
+        return parts.join('\n            UNION ALL\n            ');
+      },
+
       // --- FROM clauses ---
       // Intraday (<=7d): 5-min grain from today DB
-      // Hourly (>7d): daily DB + today aggregated to hourly via UNION ALL
+      // Hourly (>7d): year DBs + today aggregated to hourly via UNION ALL
       fromScada() {
         if (isIntradayMode()) {
-          return `db.dim_calendar c
+          return `dim.dim_calendar c
             JOIN today.scada_today sc ON c.date = sc.date
-            JOIN db.dim_duid d ON sc.DUID = d.DUID`;
+            JOIN dim.dim_duid d ON sc.DUID = d.DUID`;
         }
-        return `db.dim_calendar c
+        return `dim.dim_calendar c
           JOIN (
-            SELECT DUID, date, time, mwh FROM db.scada WHERE date < CURRENT_DATE - INTERVAL 1 DAY
-            UNION ALL
-            SELECT DUID, date, CAST(CAST(time / 100 AS INTEGER) * 100 AS SMALLINT) AS time, CAST(SUM(mw) / 12.0 AS REAL) AS mwh FROM today.scada_today WHERE date >= CURRENT_DATE - INTERVAL 1 DAY GROUP BY DUID, date, CAST(time / 100 AS INTEGER)
+            ${sql._scadaHourlyUnion()}
           ) sc ON c.date = sc.date
-          JOIN db.dim_duid d ON sc.DUID = d.DUID`;
+          JOIN dim.dim_duid d ON sc.DUID = d.DUID`;
       },
 
       fromPrice() {
         if (isIntradayMode()) {
-          return `db.dim_calendar c
+          return `dim.dim_calendar c
             JOIN today.price_today p ON c.date = p.date`;
         }
-        return `db.dim_calendar c
+        return `dim.dim_calendar c
           JOIN (
-            SELECT REGIONID, date, time, price FROM db.price WHERE date < CURRENT_DATE - INTERVAL 1 DAY
-            UNION ALL
-            SELECT REGIONID, date, CAST(CAST(time / 100 AS INTEGER) * 100 AS SMALLINT) AS time, AVG(price) AS price FROM today.price_today WHERE date >= CURRENT_DATE - INTERVAL 1 DAY GROUP BY REGIONID, date, CAST(time / 100 AS INTEGER)
+            ${sql._priceHourlyUnion()}
           ) p ON c.date = p.date`;
       },
 
@@ -433,9 +477,9 @@
           const fuel = document.getElementById("fuelFilter").value || crossFilter.fuel;
           let regionFilter;
           if (crossFilter.duids.length) {
-            regionFilter = `p.REGIONID IN (SELECT Region FROM db.dim_duid WHERE DUID IN (${crossFilter.duids.map(d => `'${d}'`).join(',')}))`;
+            regionFilter = `p.REGIONID IN (SELECT Region FROM dim.dim_duid WHERE DUID IN (${crossFilter.duids.map(d => `'${d}'`).join(',')}))`;
           } else if (fuel) {
-            regionFilter = `p.REGIONID IN (SELECT DISTINCT Region FROM db.dim_duid WHERE FuelSourceDescriptor = '${fuel}')`;
+            regionFilter = `p.REGIONID IN (SELECT DISTINCT Region FROM dim.dim_duid WHERE FuelSourceDescriptor = '${fuel}')`;
           }
           if (regionFilter) clauses.push(regionFilter);
         }
@@ -443,9 +487,9 @@
       },
 
       // --- Filter population ---
-      regions: "SELECT DISTINCT Region FROM db.dim_duid WHERE Region IS NOT NULL ORDER BY Region",
-      fuels: "SELECT DISTINCT FuelSourceDescriptor AS fuel FROM db.dim_duid WHERE FuelSourceDescriptor IS NOT NULL ORDER BY fuel",
-      allDuids: "SELECT DUID, Region, FuelSourceDescriptor AS fuel FROM db.dim_duid WHERE DUID IS NOT NULL ORDER BY DUID",
+      regions: "SELECT DISTINCT Region FROM dim.dim_duid WHERE Region IS NOT NULL ORDER BY Region",
+      fuels: "SELECT DISTINCT FuelSourceDescriptor AS fuel FROM dim.dim_duid WHERE FuelSourceDescriptor IS NOT NULL ORDER BY fuel",
+      allDuids: "SELECT DUID, Region, FuelSourceDescriptor AS fuel FROM dim.dim_duid WHERE DUID IS NOT NULL ORDER BY DUID",
 
       // --- Generation chart ---
       generation(seriesAlias, seriesCol, valCol, timeDetail) {
@@ -501,43 +545,21 @@
           WHERE ${sql.whereScada()}`;
       },
 
-      // --- CSV export ---
+      // --- CSV export (always raw 5-min grain) ---
       csvExport() {
-        const intraday = isIntradayMode();
         const hasDuids = crossFilter.duids.length > 0 || !!document.getElementById("fuelFilter").value || !!document.getElementById("regionFilter").value;
 
-        if (intraday && hasDuids) {
-          return `
-            SELECT CAST(sc.date AS VARCHAR) AS date, lpad(CAST(sc.time AS VARCHAR), 4, '0') AS time,
-              sc.DUID, d.FuelSourceDescriptor AS fuel, d.Region AS region,
-              ROUND(sc.mw, 2)::DOUBLE AS mw, ROUND(p.price, 2)::DOUBLE AS price
-            FROM ${sql.fromScada()}
-            LEFT JOIN today.price_today p ON sc.date = p.date AND sc.time = p.time AND d.Region = p.REGIONID
-            WHERE ${sql.whereScada()}
-            ORDER BY sc.date, sc.time, sc.DUID`;
-        }
-        if (intraday) {
-          return `
-            SELECT CAST(sc.date AS VARCHAR) AS date, lpad(CAST(sc.time AS VARCHAR), 4, '0') AS time,
-              d.FuelSourceDescriptor AS fuel, d.Region AS region,
-              ROUND(SUM(sc.mw), 2)::DOUBLE AS mw, ROUND(AVG(p.price), 2)::DOUBLE AS price
-            FROM ${sql.fromScada()}
-            LEFT JOIN today.price_today p ON sc.date = p.date AND sc.time = p.time AND d.Region = p.REGIONID
-            WHERE ${sql.whereScada()}
-            GROUP BY sc.date, sc.time, d.FuelSourceDescriptor, d.Region
-            ORDER BY sc.date, sc.time, d.FuelSourceDescriptor`;
-        }
-        const priceJoin = `LEFT JOIN (
-            SELECT REGIONID, date, time, price FROM db.price WHERE date < CURRENT_DATE - INTERVAL 1 DAY
-            UNION ALL
-            SELECT REGIONID, date, CAST(CAST(time / 100 AS INTEGER) * 100 AS SMALLINT) AS time, AVG(price) AS price FROM today.price_today WHERE date >= CURRENT_DATE - INTERVAL 1 DAY GROUP BY REGIONID, date, CAST(time / 100 AS INTEGER)
-          ) p ON sc.date = p.date AND sc.time = p.time AND d.Region = p.REGIONID`;
+        const scadaFrom = `dim.dim_calendar c
+          JOIN (${sql._scadaRawUnion()}) sc ON c.date = sc.date
+          JOIN dim.dim_duid d ON sc.DUID = d.DUID`;
+        const priceJoin = `LEFT JOIN (${sql._priceRawUnion()}) p ON sc.date = p.date AND sc.time = p.time AND d.Region = p.REGIONID`;
+
         if (hasDuids) {
           return `
             SELECT CAST(sc.date AS VARCHAR) AS date, lpad(CAST(sc.time AS VARCHAR), 4, '0') AS time,
               sc.DUID, d.FuelSourceDescriptor AS fuel, d.Region AS region,
-              ROUND(sc.mwh, 2)::DOUBLE AS mwh, ROUND(p.price, 2)::DOUBLE AS avg_price
-            FROM ${sql.fromScada()}
+              ROUND(sc.mw, 2)::DOUBLE AS mw, ROUND(p.price, 2)::DOUBLE AS price
+            FROM ${scadaFrom}
             ${priceJoin}
             WHERE ${sql.whereScada()}
             ORDER BY sc.date, sc.time, sc.DUID`;
@@ -545,8 +567,8 @@
         return `
           SELECT CAST(sc.date AS VARCHAR) AS date, lpad(CAST(sc.time AS VARCHAR), 4, '0') AS time,
             d.FuelSourceDescriptor AS fuel, d.Region AS region,
-            ROUND(SUM(sc.mwh), 2)::DOUBLE AS mwh, ROUND(AVG(p.price), 2)::DOUBLE AS avg_price
-          FROM ${sql.fromScada()}
+            ROUND(SUM(sc.mw), 2)::DOUBLE AS mw, ROUND(AVG(p.price), 2)::DOUBLE AS price
+          FROM ${scadaFrom}
           ${priceJoin}
           WHERE ${sql.whereScada()}
           GROUP BY sc.date, sc.time, d.FuelSourceDescriptor, d.Region
@@ -862,7 +884,7 @@
         return;
       }
       const data = await runQuery(csvSql);
-      downloadCSV(data, isIntradayMode() ? 'energy_intraday.csv' : 'energy_hourly.csv');
+      downloadCSV(data, 'energy_5min.csv');
     }
 
     document.getElementById('dl-all').addEventListener('click', downloadAllCSV);
