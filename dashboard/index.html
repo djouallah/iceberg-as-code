@@ -442,26 +442,26 @@
       // Hourly (>7d): year DBs + today aggregated to hourly via UNION ALL
       fromScada() {
         if (isIntradayMode()) {
-          return `dim.dim_calendar c
-            JOIN today.scada_today sc ON c.date = sc.date
+          return `today.scada_today sc
+            JOIN dim.dim_calendar c ON c.date = sc.date
             JOIN dim.dim_duid d ON sc.DUID = d.DUID`;
         }
-        return `dim.dim_calendar c
-          JOIN (
+        return `(
             ${sql._scadaHourlyUnion()}
-          ) sc ON c.date = sc.date
+          ) sc
+          JOIN dim.dim_calendar c ON c.date = sc.date
           JOIN dim.dim_duid d ON sc.DUID = d.DUID`;
       },
 
       fromPrice() {
         if (isIntradayMode()) {
-          return `dim.dim_calendar c
-            JOIN today.price_today p ON c.date = p.date`;
+          return `today.price_today p
+            JOIN dim.dim_calendar c ON c.date = p.date`;
         }
-        return `dim.dim_calendar c
-          JOIN (
+        return `(
             ${sql._priceHourlyUnion()}
-          ) p ON c.date = p.date`;
+          ) p
+          JOIN dim.dim_calendar c ON c.date = p.date`;
       },
 
       // --- WHERE clauses ---
@@ -556,10 +556,13 @@
       },
 
       scadaRecordCount() {
+        const parts = loadedPeriods.map(p => `SELECT date, DUID FROM p${p}.scada WHERE date < CURRENT_DATE - INTERVAL 5 DAY`);
+        parts.push(`SELECT date, DUID FROM today.scada_today WHERE date >= CURRENT_DATE - INTERVAL 5 DAY`);
+        const scadaUnion = parts.join('\n            UNION ALL\n            ');
         return `
           SELECT CAST(COUNT(*) AS INTEGER) AS cnt
-          FROM dim.dim_calendar c
-          JOIN (${sql._scadaRawUnion()}) sc ON c.date = sc.date
+          FROM (${scadaUnion}) sc
+          JOIN dim.dim_calendar c ON c.date = sc.date
           JOIN dim.dim_duid d ON sc.DUID = d.DUID
           WHERE ${sql.whereScada()}`;
       },
