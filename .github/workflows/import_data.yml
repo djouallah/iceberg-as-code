@@ -50,7 +50,7 @@ jobs:
             pip install duckdb
           fi
 
-      # --- Phase 1: Intraday + dims (fast, gets dashboard working) ---
+      # --- Phase 1: Intraday + dims → deploy immediately ---
       - name: Export fct_scada_today
         run: python scripts/cache_catalog.py export_scada_today
 
@@ -72,20 +72,12 @@ jobs:
         if: steps.mode.outputs.is_daily == 'true'
         run: python scripts/cache_catalog.py build_dim
 
-      - name: Deploy to GitHub Pages (intraday)
-        if: steps.mode.outputs.is_daily == 'false'
+      - name: Deploy to GitHub Pages (today + dims)
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./dashboard
           keep_files: true
-
-      - name: Upload to GitHub Release (intraday)
-        if: steps.mode.outputs.is_daily == 'false'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release upload data dashboard/energy_today.duckdb --clobber || true
 
       # --- Phase 2: Daily full refresh (slow) ---
       - name: Test data
