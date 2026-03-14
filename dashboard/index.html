@@ -315,15 +315,14 @@
       }
       console.log(`[OPFS] All databases loaded`);
 
-      // Build hourly aggregation cache in OPFS
+      // Build hourly agg — one table for all periods, rebuild if sources changed
       const needsRebuild = results.some(r => r.source !== 'opfs-hit');
-      await buildAggCache(needsRebuild);
+      await buildAggData(needsRebuild);
     }
 
-    async function buildAggCache(forceRebuild) {
-      const aggFile = 'agg_cache.duckdb';
+    async function buildAggData(forceRebuild) {
+      const aggFile = 'agg_data.duckdb';
       try {
-        // Check if agg_cache already exists in OPFS
         const root = await navigator.storage.getDirectory();
         let exists = false;
         try { await root.getFileHandle(aggFile); exists = true; } catch(e) {}
@@ -331,40 +330,33 @@
         if (exists && !forceRebuild) {
           await conn.query(`ATTACH '${aggFile}' AS agg (READ_ONLY);`);
           window._aggReady = true;
-          console.log('[Agg] Cache hit — using existing agg_cache.duckdb');
+          console.log('[Agg] Cache hit');
           return;
         }
 
-        // Drop old if exists
         if (exists) {
           try { await conn.query("DETACH agg;"); } catch(e) {}
           await root.removeEntry(aggFile);
         }
 
-        console.time('[Agg] Build hourly tables');
+        console.time('[Agg] Build');
         await conn.query(`ATTACH '${aggFile}' AS agg;`);
 
         const extract = "extract('hour' FROM make_time((time // 100)::BIGINT, (time % 100)::BIGINT, 0.0))";
         const scadaParts = loadedPeriods.map(p =>
-          `SELECT DUID, date, CAST(${extract} * 100 AS SMALLINT) AS time, CAST(SUM(mw) / 12.0 AS REAL) AS mwh, CAST(COUNT(*) AS INTEGER) AS cnt FROM p${p}.scada WHERE date < CURRENT_DATE - INTERVAL 5 DAY GROUP BY DUID, date, ${extract}`
-        );
-        scadaParts.push(
-          `SELECT DUID, date, CAST(${extract} * 100 AS SMALLINT) AS time, CAST(SUM(mw) / 12.0 AS REAL) AS mwh, CAST(COUNT(*) AS INTEGER) AS cnt FROM today.scada_today WHERE date >= CURRENT_DATE - INTERVAL 5 DAY GROUP BY DUID, date, ${extract}`
+          `SELECT DUID, date, CAST(${extract} * 100 AS SMALLINT) AS time, CAST(SUM(mw) / 12.0 AS REAL) AS mwh, CAST(COUNT(*) AS INTEGER) AS cnt FROM p${p}.scada GROUP BY DUID, date, ${extract}`
         );
         await conn.query(`CREATE TABLE agg.scada_hourly AS ${scadaParts.join(' UNION ALL ')}`);
 
         const priceParts = loadedPeriods.map(p =>
-          `SELECT REGIONID, date, CAST(${extract} * 100 AS SMALLINT) AS time, AVG(price)::REAL AS price FROM p${p}.price WHERE date < CURRENT_DATE - INTERVAL 5 DAY GROUP BY REGIONID, date, ${extract}`
-        );
-        priceParts.push(
-          `SELECT REGIONID, date, CAST(${extract} * 100 AS SMALLINT) AS time, AVG(price)::REAL AS price FROM today.price_today WHERE date >= CURRENT_DATE - INTERVAL 5 DAY GROUP BY REGIONID, date, ${extract}`
+          `SELECT REGIONID, date, CAST(${extract} * 100 AS SMALLINT) AS time, AVG(price)::REAL AS price FROM p${p}.price GROUP BY REGIONID, date, ${extract}`
         );
         await conn.query(`CREATE TABLE agg.price_hourly AS ${priceParts.join(' UNION ALL ')}`);
 
         window._aggReady = true;
-        console.timeEnd('[Agg] Build hourly tables');
+        console.timeEnd('[Agg] Build');
       } catch(e) {
-        console.warn('[Agg] Failed to build cache, falling back to inline unions:', e);
+        console.warn('[Agg] Failed, falling back to inline unions:', e);
       }
     }
 
@@ -471,21 +463,33 @@
 
       // Hourly aggregated (for charts when >7d)
       _scadaHourlyUnion() {
+        const extract = "extract('hour' FROM make_time((time // 100)::BIGINT, (time % 100)::BIGINT, 0.0))";
+        if (window._aggReady) {
+          return `SELECT DUID, date, time, mwh, cnt FROM agg.scada_hourly WHERE date < CURRENT_DATE - INTERVAL 5 DAY
+            UNION ALL
+            SELECT DUID, date, CAST(${extract} * 100 AS SMALLINT) AS time, CAST(SUM(mw) / 12.0 AS REAL) AS mwh, CAST(COUNT(*) AS INTEGER) AS cnt FROM today.scada_today WHERE date >= CURRENT_DATE - INTERVAL 5 DAY GROUP BY DUID, date, ${extract}`;
+        }
         const parts = loadedPeriods.map(p =>
-          `SELECT DUID, date, CAST(extract('hour' FROM make_time((time // 100)::BIGINT, (time % 100)::BIGINT, 0.0)) * 100 AS SMALLINT) AS time, CAST(SUM(mw) / 12.0 AS REAL) AS mwh, CAST(COUNT(*) AS INTEGER) AS cnt FROM p${p}.scada WHERE date < CURRENT_DATE - INTERVAL 5 DAY GROUP BY DUID, date, extract('hour' FROM make_time((time // 100)::BIGINT, (time % 100)::BIGINT, 0.0))`
+          `SELECT DUID, date, CAST(${extract} * 100 AS SMALLINT) AS time, CAST(SUM(mw) / 12.0 AS REAL) AS mwh, CAST(COUNT(*) AS INTEGER) AS cnt FROM p${p}.scada WHERE date < CURRENT_DATE - INTERVAL 5 DAY GROUP BY DUID, date, ${extract}`
         );
         parts.push(
-          `SELECT DUID, date, CAST(extract('hour' FROM make_time((time // 100)::BIGINT, (time % 100)::BIGINT, 0.0)) * 100 AS SMALLINT) AS time, CAST(SUM(mw) / 12.0 AS REAL) AS mwh, CAST(COUNT(*) AS INTEGER) AS cnt FROM today.scada_today WHERE date >= CURRENT_DATE - INTERVAL 5 DAY GROUP BY DUID, date, extract('hour' FROM make_time((time // 100)::BIGINT, (time % 100)::BIGINT, 0.0))`
+          `SELECT DUID, date, CAST(${extract} * 100 AS SMALLINT) AS time, CAST(SUM(mw) / 12.0 AS REAL) AS mwh, CAST(COUNT(*) AS INTEGER) AS cnt FROM today.scada_today WHERE date >= CURRENT_DATE - INTERVAL 5 DAY GROUP BY DUID, date, ${extract}`
         );
         return parts.join('\n            UNION ALL\n            ');
       },
 
       _priceHourlyUnion() {
+        const extract = "extract('hour' FROM make_time((time // 100)::BIGINT, (time % 100)::BIGINT, 0.0))";
+        if (window._aggReady) {
+          return `SELECT REGIONID, date, time, price FROM agg.price_hourly WHERE date < CURRENT_DATE - INTERVAL 5 DAY
+            UNION ALL
+            SELECT REGIONID, date, CAST(${extract} * 100 AS SMALLINT) AS time, AVG(price)::REAL AS price FROM today.price_today WHERE date >= CURRENT_DATE - INTERVAL 5 DAY GROUP BY REGIONID, date, ${extract}`;
+        }
         const parts = loadedPeriods.map(p =>
-          `SELECT REGIONID, date, CAST(extract('hour' FROM make_time((time // 100)::BIGINT, (time % 100)::BIGINT, 0.0)) * 100 AS SMALLINT) AS time, AVG(price) AS price FROM p${p}.price WHERE date < CURRENT_DATE - INTERVAL 5 DAY GROUP BY REGIONID, date, extract('hour' FROM make_time((time // 100)::BIGINT, (time % 100)::BIGINT, 0.0))`
+          `SELECT REGIONID, date, CAST(${extract} * 100 AS SMALLINT) AS time, AVG(price)::REAL AS price FROM p${p}.price WHERE date < CURRENT_DATE - INTERVAL 5 DAY GROUP BY REGIONID, date, ${extract}`
         );
         parts.push(
-          `SELECT REGIONID, date, CAST(extract('hour' FROM make_time((time // 100)::BIGINT, (time % 100)::BIGINT, 0.0)) * 100 AS SMALLINT) AS time, AVG(price) AS price FROM today.price_today WHERE date >= CURRENT_DATE - INTERVAL 5 DAY GROUP BY REGIONID, date, extract('hour' FROM make_time((time // 100)::BIGINT, (time % 100)::BIGINT, 0.0))`
+          `SELECT REGIONID, date, CAST(${extract} * 100 AS SMALLINT) AS time, AVG(price)::REAL AS price FROM today.price_today WHERE date >= CURRENT_DATE - INTERVAL 5 DAY GROUP BY REGIONID, date, ${extract}`
         );
         return parts.join('\n            UNION ALL\n            ');
       },
