@@ -287,8 +287,8 @@
       // Phase 1: Load dim + today (enough for default "Last 3 days" view)
       setStatus("Loading today's data...");
       const [dimResult, todayResult] = await Promise.all([
-        cacheInOPFS(_db, `${_baseUrl}/energy_dim.duckdb`, 'energy_dim.duckdb'),
-        cacheInOPFS(_db, `${_baseUrl}/energy_today.duckdb`, 'energy_today.duckdb'),
+        cacheInOPFS(_db, `${_baseUrl}/data/energy_dim.duckdb`, 'energy_dim.duckdb'),
+        cacheInOPFS(_db, `${_baseUrl}/data/energy_today.duckdb`, 'energy_today.duckdb'),
       ]);
       await conn.query("ATTACH 'energy_dim.duckdb' AS dim (READ_ONLY);");
       await conn.query("ATTACH 'energy_today.duckdb' AS today (READ_ONLY);");
@@ -300,13 +300,13 @@
     }
 
     async function loadYearDatabases() {
-      const manifest = await (await fetch(`${_baseUrl}/daily_manifest.json`)).json();
+      const manifest = await (await fetch(`${_baseUrl}/data/daily_manifest.json`)).json();
       loadedPeriods = manifest.periods;
       console.log(`[OPFS] Loading databases: ${loadedPeriods.join(', ')}...`);
 
       const sourceLabel = { 'opfs-hit': 'cached', 'opfs-miss': 'downloaded', 'opfs-refresh': 'refreshed' };
       const results = await Promise.all(
-        loadedPeriods.map(p => cacheInOPFS(_db, `${_baseUrl}/energy_data_${p}.duckdb`, `energy_data_${p}.duckdb`))
+        loadedPeriods.map(p => cacheInOPFS(_db, `${_baseUrl}/data/energy_data_${p}.duckdb`, `energy_data_${p}.duckdb`))
       );
       for (const p of loadedPeriods) {
         await conn.query(`ATTACH 'energy_data_${p}.duckdb' AS p${p} (READ_ONLY);`);
