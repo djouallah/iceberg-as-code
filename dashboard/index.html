@@ -649,7 +649,7 @@
         symbol: 'none',
         emphasis: { focus: 'series' },
         triggerLineEvent: true,
-        sampling: timeDetail ? 'lttb' : undefined,
+        sampling: 'lttb',
         itemStyle: { color: drillFuel ? PALETTE[i % PALETTE.length] : fuelColor(name) },
         data: xKeys.map(k => lookup[`${k}|${name}`] || 0),
       }));
@@ -733,7 +733,7 @@
         lineStyle: { width: 2 },
         emphasis: { focus: 'series', lineStyle: { width: 3 } },
         triggerLineEvent: true,
-        sampling: timeDetail ? 'lttb' : undefined,
+        sampling: 'lttb',
         data: xKeys.map(k => {
           const v = lookup[`${k}|${region}`];
           return v != null ? Math.round(v * 100) / 100 : null;
