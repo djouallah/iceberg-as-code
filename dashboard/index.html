@@ -556,6 +556,12 @@
       },
 
       scadaRecordCount() {
+        if (isIntradayMode()) {
+          return `
+            SELECT CAST(COUNT(*) AS INTEGER) AS raw_cnt, CAST(COUNT(*) AS INTEGER) AS agg_cnt
+            FROM ${sql.fromScada()}
+            WHERE ${sql.whereScada()}`;
+        }
         return `
           SELECT CAST(SUM(sc.cnt) AS INTEGER) AS raw_cnt, CAST(COUNT(*) AS INTEGER) AS agg_cnt
           FROM ${sql.fromScada()}
