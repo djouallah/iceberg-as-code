@@ -126,7 +126,7 @@ def export_dim_calendar():
 def build_daily():
     # Clean old files
     for f in os.listdir(DASHBOARD_DIR):
-        if f.startswith("energy_data_") or f in ("energy_daily.duckdb", "energy_dim.duckdb"):
+        if f.startswith("energy_data_") or f == "energy_daily.duckdb":
             os.remove(os.path.join(DASHBOARD_DIR, f))
 
     con = duckdb.connect(":memory:")

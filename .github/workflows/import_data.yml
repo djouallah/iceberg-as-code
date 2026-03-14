@@ -50,7 +50,7 @@ jobs:
             pip install duckdb
           fi
 
-      # --- Phase 1: Intraday + dims → deploy immediately ---
+      # --- Phase 1: Intraday (always) + dims (daily only) → deploy immediately ---
       - name: Export fct_scada_today
         run: python scripts/cache_catalog.py export_scada_today
 
@@ -79,6 +79,21 @@ jobs:
           publish_dir: ./dashboard
           keep_files: true
 
+      - name: Upload to GitHub Release (today + dims)
+        if: steps.mode.outputs.is_daily == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete data --yes || true
+          gh release create data dashboard/energy_today.duckdb dashboard/energy_dim.duckdb --title "Data" --notes "Auto-updated energy database"
+
+      - name: Upload to GitHub Release (today only)
+        if: steps.mode.outputs.is_daily != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload data dashboard/energy_today.duckdb --clobber
+
       # --- Phase 2: Daily full refresh (slow) ---
       - name: Test data
         if: steps.mode.outputs.is_daily == 'true'
@@ -101,8 +116,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release delete data --yes || true
-          gh release create data dashboard/energy_dim.duckdb dashboard/energy_data_*.duckdb dashboard/energy_today.duckdb --title "Data" --notes "Auto-updated energy database"
+          gh release upload data dashboard/energy_data_*.duckdb --clobber
 
       - name: Deploy to GitHub Pages (daily)
         if: steps.mode.outputs.is_daily == 'true'
