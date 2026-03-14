@@ -104,11 +104,16 @@ jobs:
         if: steps.mode.outputs.is_daily == 'true'
         run: python scripts/cache_catalog.py build_daily
 
+      - name: Build daily aggregate database
+        if: steps.mode.outputs.is_daily == 'true'
+        run: python scripts/cache_catalog.py build_daily_agg
+
       - name: Stage data for deploy (daily)
         if: steps.mode.outputs.is_daily == 'true'
         run: |
           mkdir -p deploy_daily/data
           cp dashboard/energy_data_*.duckdb deploy_daily/data/
+          cp dashboard/energy_daily_agg.duckdb deploy_daily/data/
           cp dashboard/daily_manifest.json deploy_daily/data/
       - name: Deploy to GitHub Pages (daily)
         if: steps.mode.outputs.is_daily == 'true'

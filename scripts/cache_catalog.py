@@ -173,13 +173,39 @@ def build_daily():
         json.dump({"periods": tags}, f)
     print(f"Manifest: {tags}")
 
-    # Clean up parquet intermediates
+    con.close()
+
+
+def build_daily_agg():
+    agg_path = os.path.join(DASHBOARD_DIR, "energy_daily_agg.duckdb")
+    if os.path.exists(agg_path):
+        os.remove(agg_path)
+
+    con = duckdb.connect(agg_path)
+    con.execute(f"""
+        CREATE TABLE scada_daily AS
+        SELECT DUID, date, CAST(SUM(mw) / 12.0 AS REAL) AS mwh
+        FROM '{DASHBOARD_DIR}/fct_scada.parquet'
+        GROUP BY DUID, date
+        ORDER BY DUID, date
+    """)
+    con.execute(f"""
+        CREATE TABLE price_daily AS
+        SELECT REGIONID, date, CAST(AVG(price) AS REAL) AS price
+        FROM '{DASHBOARD_DIR}/fct_price.parquet'
+        GROUP BY REGIONID, date
+        ORDER BY REGIONID, date
+    """)
+    con.close()
+
+    # Clean up parquet intermediates (shared with build_daily)
     for f in ["fct_scada.parquet", "fct_price.parquet"]:
         path = os.path.join(DASHBOARD_DIR, f)
         if os.path.exists(path):
             os.remove(path)
 
-    con.close()
+    size_mb = os.path.getsize(agg_path) / 1024 / 1024
+    print(f"Built {agg_path} ({size_mb:.1f} MB)")
 
 
 def build_dim():
@@ -229,6 +255,7 @@ COMMANDS = {
     "export_dim_calendar": export_dim_calendar,
     "build_dim": build_dim,
     "build_daily": build_daily,
+    "build_daily_agg": build_daily_agg,
     "build_today": build_today,
 }
 
