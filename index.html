@@ -409,12 +409,12 @@
         : [];
     }
 
-    function downloadCSV(rows, filename) {
-      if (!rows.length) return;
-      const cols = Object.keys(rows[0]);
-      const lines = [cols.join(',')];
-      for (const row of rows) lines.push(cols.map(c => row[c] ?? '').join(','));
-      const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+    async function downloadCSVDirect(sqlStr, filename) {
+      const csvPath = `/${filename}`;
+      await conn.query(`COPY (${sqlStr}) TO '${csvPath}' (FORMAT CSV, HEADER)`);
+      const buf = await _db.copyFileToBuffer(csvPath);
+      await _db.dropFile(csvPath);
+      const blob = new Blob([buf], { type: 'text/csv' });
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
       a.download = filename;
@@ -923,27 +923,34 @@
 
     // --- CSV download ---
     async function downloadAllCSV() {
-      let csvSql;
-      if (rangeDays() <= 7) {
-        csvSql = sql.csvExportIntraday();
-      } else {
-        try {
+      const btn = document.getElementById('dl-all');
+      btn.disabled = true;
+      btn.textContent = 'Preparing...';
+      try {
+        let csvSql;
+        if (rangeDays() <= 7) {
+          csvSql = sql.csvExportIntraday();
+        } else {
+          btn.textContent = 'Downloading data...';
+          setStatus("Downloading detailed data for export...", "loading");
           await ensureYearDbsLoaded();
-        } catch (e) {
-          alert('Failed to download detailed data for CSV export. Please try again.');
-          console.error('[CSV] Year DB load failed:', e);
-          return;
+          csvSql = sql.csvExport();
         }
-        csvSql = sql.csvExport();
+        btn.textContent = 'Counting rows...';
+        setStatus("Counting rows...", "loading");
+        const countResult = await conn.query(`SELECT COUNT(*)::INTEGER AS n FROM (${csvSql})`);
+        const rowCount = Number(countResult.getChild('n').get(0));
+        btn.textContent = `Exporting ${rowCount.toLocaleString()} rows...`;
+        setStatus(`Exporting ${rowCount.toLocaleString()} rows to CSV...`, "loading");
+        await downloadCSVDirect(csvSql, 'energy_5min.csv');
+        setStatus(window._cutoffCached || "Connected", "connected");
+      } catch (e) {
+        setStatus("CSV export error: " + e.message, "error");
+        console.error('[CSV]', e);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Download CSV';
       }
-      const countResult = await runQuery(`SELECT COUNT(*) AS n FROM (${csvSql})`);
-      const rowCount = countResult[0].n;
-      if (rowCount > 1048576) {
-        alert(`Too many rows (${rowCount.toLocaleString()}). Excel limit is 1,048,576. Apply filters or reduce the date range.`);
-        return;
-      }
-      const data = await runQuery(csvSql);
-      downloadCSV(data, 'energy_5min.csv');
     }
 
     document.getElementById('dl-all').addEventListener('click', downloadAllCSV);
