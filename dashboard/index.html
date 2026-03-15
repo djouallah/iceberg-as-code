@@ -303,30 +303,64 @@
       console.log(`[OPFS] agg: ${sourceLabel[aggResult.source]}`);
     }
 
-    let _yearDbsLoaded = false;
-    async function ensureYearDbsLoaded() {
-      if (_yearDbsLoaded) return;
-      const manifest = await (await fetch(`${_baseUrl}/data/daily_manifest.json`)).json();
-      loadedPeriods = manifest.periods;
+    let _manifestCache = null;
+    const _attachedPeriods = new Set();
+
+    function periodsForRange(from, to) {
+      const periods = [];
+      let d = new Date(from);
+      const end = new Date(to);
+      while (d <= end) {
+        const y = d.getFullYear();
+        const h = d.getMonth() < 6 ? 1 : 2;
+        const tag = `${y}_h${h}`;
+        if (!periods.includes(tag)) periods.push(tag);
+        d = new Date(h === 1 ? `${y}-07-01` : `${y + 1}-01-01`);
+      }
+      return periods;
+    }
+
+    async function ensurePeriodsForRange(from, to) {
+      if (!_manifestCache) {
+        _manifestCache = await (await fetch(`${_baseUrl}/data/daily_manifest.json`)).json();
+      }
+      const available = new Set(_manifestCache.periods);
+      const needed = periodsForRange(from, to).filter(p => available.has(p) && !_attachedPeriods.has(p));
+      if (!needed.length) return;
+
+      setStatus("Downloading detailed data...", "loading");
+      const sourceLabel = { 'opfs-hit': 'cached', 'opfs-miss': 'downloaded', 'opfs-refresh': 'refreshed' };
+      const results = await Promise.all(
+        needed.map(p => cacheInOPFS(_db, `${_baseUrl}/data/energy_data_${p}.duckdb`, `energy_data_${p}.duckdb`))
+      );
+      for (let i = 0; i < needed.length; i++) {
+        const p = needed[i];
+        await conn.query(`ATTACH 'energy_data_${p}.duckdb' AS p${p} (READ_ONLY);`);
+        _attachedPeriods.add(p);
+        loadedPeriods.push(p);
+        console.log(`[OPFS] p${p}: ${sourceLabel[results[i].source]}`);
+      }
+      setStatus(window._cutoffCached || "Connected", "connected");
+    }
+
+    async function ensureAllPeriods() {
+      if (!_manifestCache) {
+        _manifestCache = await (await fetch(`${_baseUrl}/data/daily_manifest.json`)).json();
+      }
+      const needed = _manifestCache.periods.filter(p => !_attachedPeriods.has(p));
+      if (!needed.length) return;
       setStatus("Downloading detailed data for export...", "loading");
       const sourceLabel = { 'opfs-hit': 'cached', 'opfs-miss': 'downloaded', 'opfs-refresh': 'refreshed' };
       const results = await Promise.all(
-        loadedPeriods.map(p => cacheInOPFS(_db, `${_baseUrl}/data/energy_data_${p}.duckdb`, `energy_data_${p}.duckdb`))
+        needed.map(p => cacheInOPFS(_db, `${_baseUrl}/data/energy_data_${p}.duckdb`, `energy_data_${p}.duckdb`))
       );
-      const attached = new Set();
-      try {
-        const existing = await conn.query("SELECT database_name FROM duckdb_databases()");
-        for (let i = 0; i < Number(existing.numRows); i++) attached.add(existing.getChild('database_name').get(i));
-      } catch (e) { /* ignore */ }
-      for (const p of loadedPeriods) {
-        if (!attached.has(`p${p}`)) {
-          await conn.query(`ATTACH 'energy_data_${p}.duckdb' AS p${p} (READ_ONLY);`);
-        }
+      for (let i = 0; i < needed.length; i++) {
+        const p = needed[i];
+        await conn.query(`ATTACH 'energy_data_${p}.duckdb' AS p${p} (READ_ONLY);`);
+        _attachedPeriods.add(p);
+        loadedPeriods.push(p);
+        console.log(`[OPFS] p${p}: ${sourceLabel[results[i].source]}`);
       }
-      for (let i = 0; i < loadedPeriods.length; i++) {
-        console.log(`[OPFS] p${loadedPeriods[i]}: ${sourceLabel[results[i].source]}`);
-      }
-      _yearDbsLoaded = true;
       setStatus(window._cutoffCached || "Connected", "connected");
     }
 
@@ -490,12 +524,29 @@
         return parts.join('\n            UNION ALL\n            ');
       },
 
+      // --- Intraday UNION builders (selected periods + today) ---
+      _scadaIntradayUnion() {
+        const { from, to } = getDateRange();
+        const needed = periodsForRange(from, to).filter(p => _attachedPeriods.has(p));
+        const parts = needed.map(p => `SELECT DUID, date, time, mw FROM p${p}.scada`);
+        parts.push(`SELECT DUID, date, time, mw FROM today.scada_today`);
+        return parts.join('\n            UNION ALL\n            ');
+      },
+
+      _priceIntradayUnion() {
+        const { from, to } = getDateRange();
+        const needed = periodsForRange(from, to).filter(p => _attachedPeriods.has(p));
+        const parts = needed.map(p => `SELECT REGIONID, date, time, price FROM p${p}.price`);
+        parts.push(`SELECT REGIONID, date, time, price FROM today.price_today`);
+        return parts.join('\n            UNION ALL\n            ');
+      },
+
       // --- FROM clauses ---
-      // Intraday (<=7d): 5-min grain from today DB
+      // Intraday (<=7d): 5-min grain from loaded year-half DBs + today
       // Daily (>7d): pre-aggregated daily + today aggregated to daily
       fromScada() {
         if (isIntradayMode()) {
-          return `today.scada_today sc
+          return `(${sql._scadaIntradayUnion()}) sc
             JOIN dim.dim_calendar c ON c.date = sc.date
             JOIN dim.dim_duid d ON sc.DUID = d.DUID`;
         }
@@ -511,7 +562,7 @@
 
       fromPrice() {
         if (isIntradayMode()) {
-          return `today.price_today p
+          return `(${sql._priceIntradayUnion()}) p
             JOIN dim.dim_calendar c ON c.date = p.date`;
         }
         if (!aggLoaded) {
@@ -646,9 +697,7 @@
       },
 
       csvExportIntraday() {
-        const scadaSrc = `SELECT DUID, date, time, mw FROM today.scada_today`;
-        const priceSrc = `SELECT REGIONID, date, time, price FROM today.price_today`;
-        return sql._csvExportFrom(scadaSrc, priceSrc);
+        return sql._csvExportFrom(sql._scadaIntradayUnion(), sql._priceIntradayUnion());
       },
 
       // --- Cutoff timestamp ---
@@ -957,11 +1006,14 @@
       try {
         let csvSql;
         if (rangeDays() <= 7) {
+          const { from, to } = getDateRange();
+          btn.textContent = 'Downloading data...';
+          await ensurePeriodsForRange(from, to);
           csvSql = sql.csvExportIntraday();
         } else {
           btn.textContent = 'Downloading data...';
           setStatus("Downloading detailed data for export...", "loading");
-          await ensureYearDbsLoaded();
+          await ensureAllPeriods();
           csvSql = sql.csvExport();
         }
         btn.textContent = 'Exporting...';
@@ -1042,6 +1094,10 @@
       document.querySelector('.charts').classList.add('loading');
       updateFilterTags();
       try {
+        if (isIntradayMode()) {
+          const { from, to } = getDateRange();
+          await ensurePeriodsForRange(from, to);
+        }
         await Promise.all([renderGeneration(seq), renderPrice(seq), renderMap(seq),
           runQuery(sql.generatorCount()).then(r => { if (seq === _renderSeq && r.length) document.getElementById('kpiGens').textContent = r[0].cnt.toLocaleString(); })
         ]);
