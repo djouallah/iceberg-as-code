@@ -100,7 +100,8 @@
     <div class="kpi-card"><div class="kpi-label">Avg Price</div><div class="kpi-value" id="kpiPrice">--</div><div class="kpi-sub">$/MWh across regions</div></div>
     <div class="kpi-card"><div class="kpi-label">Active Generators</div><div class="kpi-value" id="kpiGens">--</div><div class="kpi-sub">DUIDs reporting</div></div>
     <div class="kpi-card"><div class="kpi-label">Top Fuel Source</div><div class="kpi-value" id="kpiTopFuel">--</div><div class="kpi-sub" id="kpiTopFuelSub">by generation</div></div>
-    <div class="kpi-card"><div class="kpi-label">Number of Records</div><div class="kpi-value" id="kpiRecords">--</div><div class="kpi-sub" id="kpiRecordsSub">scada rows</div></div>
+    <div class="kpi-card"><div class="kpi-label">Latest MW</div><div class="kpi-value" id="kpiLatestMW">--</div><div class="kpi-sub" id="kpiLatestMWSub">total generation</div></div>
+    <div class="kpi-card"><div class="kpi-label">Latest Price</div><div class="kpi-value" id="kpiLatestPrice">--</div><div class="kpi-sub" id="kpiLatestPriceSub">avg $/MWh</div></div>
   </div>
 
   <div class="charts">
@@ -821,10 +822,17 @@
         document.getElementById('kpiTopFuelSub').textContent = `${Math.round(topFuel[1] / (uniqueIntervals || 1)).toLocaleString()} ${avgLabel}`;
       }
 
-      const rawRecords = data.reduce((s, d) => s + d.row_cnt, 0);
-      const aggRecords = data.length;
-      document.getElementById('kpiRecords').textContent = rawRecords.toLocaleString();
-      document.getElementById('kpiRecordsSub').textContent = `${aggRecords.toLocaleString()} aggregated`;
+      // Latest MW: always from latest 5-min reading in today DB
+      const latestMWResult = await runQuery(`
+        SELECT SUM(mw)::DOUBLE AS total_mw, CAST(date AS VARCHAR) AS d, time
+        FROM today.scada_today
+        WHERE date = (SELECT MAX(date) FROM today.scada_today)
+          AND time = (SELECT MAX(time) FROM today.scada_today WHERE date = (SELECT MAX(date) FROM today.scada_today))
+        GROUP BY date, time`);
+      if (latestMWResult.length) {
+        document.getElementById('kpiLatestMW').textContent = Math.round(latestMWResult[0].total_mw).toLocaleString();
+        document.getElementById('kpiLatestMWSub').textContent = `at ${formatTime(latestMWResult[0].time)}`;
+      }
     }
 
     // --- Average Price by Region (line) ---
@@ -883,6 +891,18 @@
       // KPI: avg price
       const avgPrice = data.reduce((s, d) => s + d.avg_price, 0) / data.length;
       document.getElementById('kpiPrice').textContent = '$' + avgPrice.toFixed(1);
+
+      // Latest Price: always from latest 5-min reading in today DB
+      const latestPriceResult = await runQuery(`
+        SELECT AVG(price)::DOUBLE AS avg_price, CAST(date AS VARCHAR) AS d, time
+        FROM today.price_today
+        WHERE date = (SELECT MAX(date) FROM today.price_today)
+          AND time = (SELECT MAX(time) FROM today.price_today WHERE date = (SELECT MAX(date) FROM today.price_today))
+        GROUP BY date, time`);
+      if (latestPriceResult.length) {
+        document.getElementById('kpiLatestPrice').textContent = '$' + latestPriceResult[0].avg_price.toFixed(1);
+        document.getElementById('kpiLatestPriceSub').textContent = `at ${formatTime(latestPriceResult[0].time)}`;
+      }
     }
 
     // --- Generator Map (geo scatter) ---
