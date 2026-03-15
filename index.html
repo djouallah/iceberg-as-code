@@ -57,21 +57,21 @@
     .tab-btn:hover { color: #e1e4e8; }
     .tab-btn.active { color: #58a6ff; border-bottom-color: #58a6ff; }
     .analyze-controls { display: flex; gap: 0.8rem; padding: 0.8rem 2rem; align-items: center; flex-wrap: wrap; }
-    .analyze-controls label.section-label { font-size: 0.75rem; color: #8b949e; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; }
-    .analyze-controls label.cb-label { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.8rem; color: #e1e4e8; cursor: pointer; }
-    .analyze-controls label.cb-label input[type=checkbox] { accent-color: #58a6ff; }
-    .analyze-controls label.cb-label.disabled { color: #484f58; cursor: default; }
-    .analyze-controls .separator { width: 1px; height: 1.2rem; background: #30363d; }
+    .analyze-controls label { font-size: 0.75rem; color: #8b949e; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; }
+    .multi-dropdown { position: relative; }
+    .multi-dropdown .dd-trigger { padding: 0.35rem 0.6rem; border: 1px solid #30363d; border-radius: 6px; font-size: 0.8rem; background: #0d1117; color: #e1e4e8; cursor: pointer; outline: none; transition: border-color 0.2s; white-space: nowrap; }
+    .multi-dropdown .dd-trigger:hover { border-color: #58a6ff; }
+    .multi-dropdown .dd-panel { display: none; position: absolute; top: 100%; left: 0; z-index: 1000; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; min-width: 200px; margin-top: 4px; box-shadow: 0 8px 24px rgba(0,0,0,0.4); }
+    .multi-dropdown .dd-panel.open { display: block; }
+    .multi-dropdown .dd-panel label { display: flex; align-items: center; gap: 0.4rem; padding: 0.3rem 0.6rem; cursor: pointer; font-size: 0.8rem; color: #e1e4e8; text-transform: none; letter-spacing: normal; font-weight: 400; }
+    .multi-dropdown .dd-panel label:hover { background: rgba(88,166,255,0.1); }
+    .multi-dropdown .dd-panel label.disabled { color: #484f58; cursor: default; }
+    .multi-dropdown .dd-panel input[type=checkbox] { accent-color: #58a6ff; }
     .btn-analyze { padding: 0.4rem 1rem; border: 1px solid #30363d; border-radius: 6px; font-size: 0.8rem; font-weight: 600; background: none; color: #e1e4e8; cursor: pointer; transition: all 0.2s; }
     .btn-analyze:hover { border-color: #58a6ff; color: #58a6ff; }
     .btn-analyze.primary { background: #238636; border-color: #238636; color: #fff; }
     .btn-analyze.primary:hover { background: #2ea043; border-color: #2ea043; }
     .btn-analyze:disabled { opacity: 0.5; cursor: not-allowed; }
-    .sql-editor-wrap { padding: 0.4rem 2rem; position: relative; }
-    .sql-editor { width: 100%; min-height: 5rem; max-height: 20rem; padding: 0.5rem; border: 1px solid #30363d; border-radius: 6px; background: #0d1117; color: #79c0ff; font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace; font-size: 0.78rem; line-height: 1.5; resize: vertical; outline: none; tab-size: 2; }
-    .sql-editor:focus { border-color: #58a6ff; }
-    .sql-reset { position: absolute; top: 0.6rem; right: 2.5rem; font-size: 0.7rem; color: #58a6ff; cursor: pointer; background: #0d1117; padding: 0 0.3rem; display: none; }
-    .sql-reset:hover { color: #79c0ff; }
     .analyze-info { font-size: 0.75rem; color: #8b949e; padding: 0 2rem; }
     .analyze-table-wrap { padding: 0 2rem 1rem; overflow-x: auto; max-height: 60vh; overflow-y: auto; }
     .analyze-table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
@@ -149,23 +149,27 @@
 
   <div id="view-analyze" style="display:none">
     <div class="analyze-controls">
-      <label class="section-label">Measures</label>
-      <label class="cb-label"><input type="checkbox" id="measGeneration" checked> Generation</label>
-      <label class="cb-label"><input type="checkbox" id="measPrice" checked> Price</label>
-      <div class="separator"></div>
-      <label class="section-label">Dimensions</label>
-      <label class="cb-label disabled"><input type="checkbox" checked disabled> Date</label>
-      <label class="cb-label"><input type="checkbox" id="dimTime"> Time</label>
-      <label class="cb-label"><input type="checkbox" id="dimDUID"> DUID</label>
-      <label class="cb-label"><input type="checkbox" id="dimFuel"> Fuel</label>
-      <label class="cb-label"><input type="checkbox" id="dimRegion"> Region</label>
-      <div class="separator"></div>
+      <label>Measures</label>
+      <div class="multi-dropdown" id="measDropdown">
+        <button class="dd-trigger" id="measTrigger" type="button">Generation, Price</button>
+        <div class="dd-panel" id="measPanel">
+          <label><input type="checkbox" id="measGeneration" checked> Generation</label>
+          <label><input type="checkbox" id="measPrice" checked> Price</label>
+        </div>
+      </div>
+      <label>Dimensions</label>
+      <div class="multi-dropdown" id="dimDropdown">
+        <button class="dd-trigger" id="dimTrigger" type="button">Date</button>
+        <div class="dd-panel" id="dimPanel">
+          <label class="disabled"><input type="checkbox" checked disabled> Date</label>
+          <label><input type="checkbox" id="dimTime"> Time</label>
+          <label><input type="checkbox" id="dimDUID"> DUID</label>
+          <label><input type="checkbox" id="dimFuel"> Fuel</label>
+          <label><input type="checkbox" id="dimRegion"> Region</label>
+        </div>
+      </div>
       <button class="btn-analyze" id="analyzePreview" type="button">Preview</button>
       <button class="btn-analyze primary" id="analyzeDownload" type="button">Download CSV</button>
-    </div>
-    <div class="sql-editor-wrap">
-      <textarea class="sql-editor" id="sqlEditor" spellcheck="false"></textarea>
-      <span class="sql-reset" id="sqlReset">Reset SQL</span>
     </div>
     <div class="analyze-info" id="analyzeInfo"></div>
     <div class="analyze-table-wrap">
@@ -1093,7 +1097,7 @@
       }
     });
     document.getElementById('duidPanel').addEventListener('click', e => e.stopPropagation());
-    document.addEventListener('click', () => document.getElementById('duidPanel').classList.remove('open'));
+    document.addEventListener('click', () => { document.getElementById('duidPanel').classList.remove('open'); document.querySelectorAll('.dd-panel.open').forEach(p => p.classList.remove('open')); });
     document.getElementById('duidSearch').addEventListener('input', e => renderDuidList(e.target.value));
 
     // --- Tab switching ---
@@ -1104,33 +1108,39 @@
         const tab = btn.dataset.tab;
         document.getElementById('view-dashboard').style.display = tab === 'dashboard' ? '' : 'none';
         document.getElementById('view-analyze').style.display = tab === 'analyze' ? '' : 'none';
-        if (tab === 'analyze' && !_sqlManualEdit) refreshSqlEditor();
       });
     }
 
-    // --- Analyze: SQL editor state ---
-    let _sqlManualEdit = false;
+    // --- Analyze: dropdown open/close ---
+    function setupDropdown(triggerId, panelId) {
+      const trigger = document.getElementById(triggerId);
+      const panel = document.getElementById(panelId);
+      trigger.addEventListener('click', (e) => {
+        e.stopPropagation();
+        // Close other panels
+        document.querySelectorAll('.dd-panel.open').forEach(p => { if (p !== panel) p.classList.remove('open'); });
+        panel.classList.toggle('open');
+      });
+      panel.addEventListener('click', e => e.stopPropagation());
+    }
+    setupDropdown('measTrigger', 'measPanel');
+    setupDropdown('dimTrigger', 'dimPanel');
 
-    function refreshSqlEditor() {
-      const { measures } = getAnalyzeOptions();
-      if (!measures.generation && !measures.price) {
-        document.getElementById('sqlEditor').value = '-- Select at least one measure';
-        return;
-      }
-      document.getElementById('sqlEditor').value = buildAnalyzeSQL(null);
-      document.getElementById('sqlReset').style.display = 'none';
-      _sqlManualEdit = false;
+    function updateMeasTrigger() {
+      const parts = [];
+      if (document.getElementById('measGeneration').checked) parts.push('Generation');
+      if (document.getElementById('measPrice').checked) parts.push('Price');
+      document.getElementById('measTrigger').textContent = parts.length ? parts.join(', ') : 'None selected';
     }
 
-    document.getElementById('sqlEditor').addEventListener('input', () => {
-      _sqlManualEdit = true;
-      document.getElementById('sqlReset').style.display = '';
-    });
-
-    document.getElementById('sqlReset').addEventListener('click', () => {
-      refreshSqlEditor();
-      clearAnalyzePreview();
-    });
+    function updateDimTrigger() {
+      const parts = ['Date'];
+      if (document.getElementById('dimTime').checked) parts.push('Time');
+      if (document.getElementById('dimDUID').checked) parts.push('DUID');
+      if (document.getElementById('dimFuel').checked) parts.push('Fuel');
+      if (document.getElementById('dimRegion').checked) parts.push('Region');
+      document.getElementById('dimTrigger').textContent = parts.join(', ');
+    }
 
     // --- Analyze: read checkboxes ---
     function getAnalyzeOptions() {
@@ -1250,13 +1260,7 @@
       try {
         await ensureAnalyzeData();
         setStatus("Previewing...", "loading");
-        const userSql = document.getElementById('sqlEditor').value.trim();
-        if (!userSql || userSql.startsWith('--')) {
-          info.textContent = 'Enter a valid SQL query.';
-          setStatus(window._cutoffCached || "Connected", "connected");
-          return;
-        }
-        const previewSql = `SELECT * FROM (${userSql}) LIMIT 500`;
+        const previewSql = buildAnalyzeSQL(500);
         const rows = await runQuery(previewSql);
 
         if (!rows.length) {
@@ -1273,7 +1277,7 @@
         html += '</tbody>';
         table.innerHTML = html;
 
-        const countSql = `SELECT COUNT(*) AS cnt FROM (${userSql})`;
+        const countSql = `SELECT COUNT(*) AS cnt FROM (${buildAnalyzeSQL(null)})`;
         const countResult = await runQuery(countSql);
         const total = countResult[0]?.cnt || rows.length;
         info.textContent = rows.length < total
@@ -1311,12 +1315,7 @@
         await ensureAnalyzeData();
         btn.textContent = 'Exporting...';
         setStatus("Exporting CSV...", "loading");
-        const userSql = document.getElementById('sqlEditor').value.trim();
-        if (!userSql || userSql.startsWith('--')) {
-          alert('Enter a valid SQL query.');
-          return;
-        }
-        const exportSql = `SELECT * FROM (${userSql}) LIMIT 1000000`;
+        const exportSql = buildAnalyzeSQL(1000000);
         const { from, to } = getDateRange();
         const filename = `energy_export_${from}_${to}.csv`;
         const rowCount = await downloadCSVDirect(exportSql, filename);
@@ -1340,11 +1339,11 @@
 
     document.getElementById('analyzePreview').addEventListener('click', analyzePreview);
     document.getElementById('analyzeDownload').addEventListener('click', analyzeDownload);
-    for (const id of ['measGeneration', 'measPrice', 'dimTime', 'dimDUID', 'dimFuel', 'dimRegion']) {
-      document.getElementById(id).addEventListener('change', () => {
-        if (!_sqlManualEdit) refreshSqlEditor();
-        clearAnalyzePreview();
-      });
+    for (const id of ['measGeneration', 'measPrice']) {
+      document.getElementById(id).addEventListener('change', () => { updateMeasTrigger(); clearAnalyzePreview(); });
+    }
+    for (const id of ['dimTime', 'dimDUID', 'dimFuel', 'dimRegion']) {
+      document.getElementById(id).addEventListener('change', () => { updateDimTrigger(); clearAnalyzePreview(); });
     }
 
     // --- Filter population ---
@@ -1386,7 +1385,7 @@
         updateDuidTrigger();
         clearQueryCache();
         clearAnalyzePreview();
-        if (!_sqlManualEdit) refreshSqlEditor();
+
         renderAll();
       });
     }
@@ -1398,7 +1397,7 @@
         crossFilter.duids = [];
         updateDuidTrigger();
         clearAnalyzePreview();
-        if (!_sqlManualEdit) refreshSqlEditor();
+
         renderAll();
       });
     }
