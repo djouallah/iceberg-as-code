@@ -614,7 +614,7 @@
       },
 
       // --- Filter population ---
-      regions: "SELECT DISTINCT Region FROM dim.dim_duid WHERE Region IS NOT NULL ORDER BY Region",
+      regions: "SELECT DISTINCT Region FROM dim.dim_duid WHERE Region IS NOT NULL AND Region != 'WA1' ORDER BY Region",
       fuels: "SELECT DISTINCT FuelSourceDescriptor AS fuel FROM dim.dim_duid WHERE FuelSourceDescriptor IS NOT NULL ORDER BY fuel",
       allDuids: "SELECT DUID, Region, FuelSourceDescriptor AS fuel FROM dim.dim_duid WHERE DUID IS NOT NULL ORDER BY DUID",
 
