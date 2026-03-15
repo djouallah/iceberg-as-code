@@ -822,13 +822,22 @@
         document.getElementById('kpiTopFuelSub').textContent = `${Math.round(topFuel[1] / (uniqueIntervals || 1)).toLocaleString()} ${avgLabel}`;
       }
 
-      // Latest MW: always from latest 5-min reading in today DB
+      // Latest MW: latest 5-min reading, respects region/fuel/DUID filters but ignores date
+      const region = document.getElementById("regionFilter").value || crossFilter.region;
+      const fuel = document.getElementById("fuelFilter").value || crossFilter.fuel;
+      const mwFilters = [];
+      if (region) mwFilters.push(`d.Region = '${region}'`);
+      if (fuel) mwFilters.push(`d.FuelSourceDescriptor = '${fuel}'`);
+      if (crossFilter.duids.length) mwFilters.push(`sc.DUID IN (${crossFilter.duids.map(d => `'${d}'`).join(',')})`);
+      const mwWhere = mwFilters.length ? `AND ${mwFilters.join(' AND ')}` : '';
       const latestMWResult = await runQuery(`
-        SELECT SUM(mw)::DOUBLE AS total_mw, CAST(date AS VARCHAR) AS d, time
-        FROM today.scada_today
-        WHERE date = (SELECT MAX(date) FROM today.scada_today)
-          AND time = (SELECT MAX(time) FROM today.scada_today WHERE date = (SELECT MAX(date) FROM today.scada_today))
-        GROUP BY date, time`);
+        SELECT SUM(sc.mw)::DOUBLE AS total_mw, CAST(sc.date AS VARCHAR) AS d, sc.time
+        FROM today.scada_today sc
+        JOIN dim.dim_duid d ON sc.DUID = d.DUID
+        WHERE sc.date = (SELECT MAX(date) FROM today.scada_today)
+          AND sc.time = (SELECT MAX(time) FROM today.scada_today WHERE date = (SELECT MAX(date) FROM today.scada_today))
+          ${mwWhere}
+        GROUP BY sc.date, sc.time`);
       if (latestMWResult.length) {
         document.getElementById('kpiLatestMW').textContent = Math.round(latestMWResult[0].total_mw).toLocaleString();
         document.getElementById('kpiLatestMWSub').textContent = `at ${formatTime(latestMWResult[0].time)}`;
@@ -893,12 +902,16 @@
       document.getElementById('kpiPrice').textContent = '$' + avgPrice.toFixed(1);
 
       // Latest Price: always from latest 5-min reading in today DB
+      // Latest Price: latest 5-min reading, respects region filter but ignores date
+      const regionP = document.getElementById("regionFilter").value || crossFilter.region;
+      const priceWhere = regionP ? `AND p.REGIONID = '${regionP}'` : '';
       const latestPriceResult = await runQuery(`
-        SELECT AVG(price)::DOUBLE AS avg_price, CAST(date AS VARCHAR) AS d, time
-        FROM today.price_today
-        WHERE date = (SELECT MAX(date) FROM today.price_today)
-          AND time = (SELECT MAX(time) FROM today.price_today WHERE date = (SELECT MAX(date) FROM today.price_today))
-        GROUP BY date, time`);
+        SELECT AVG(p.price)::DOUBLE AS avg_price, CAST(p.date AS VARCHAR) AS d, p.time
+        FROM today.price_today p
+        WHERE p.date = (SELECT MAX(date) FROM today.price_today)
+          AND p.time = (SELECT MAX(time) FROM today.price_today WHERE date = (SELECT MAX(date) FROM today.price_today))
+          ${priceWhere}
+        GROUP BY p.date, p.time`);
       if (latestPriceResult.length) {
         document.getElementById('kpiLatestPrice').textContent = '$' + latestPriceResult[0].avg_price.toFixed(1);
         document.getElementById('kpiLatestPriceSub').textContent = `at ${formatTime(latestPriceResult[0].time)}`;
