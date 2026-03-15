@@ -57,14 +57,21 @@
     .tab-btn:hover { color: #e1e4e8; }
     .tab-btn.active { color: #58a6ff; border-bottom-color: #58a6ff; }
     .analyze-controls { display: flex; gap: 0.8rem; padding: 0.8rem 2rem; align-items: center; flex-wrap: wrap; }
-    .analyze-controls select { padding: 0.35rem 0.6rem; border: 1px solid #30363d; border-radius: 6px; font-size: 0.8rem; background: #0d1117; color: #e1e4e8; cursor: pointer; outline: none; }
-    .analyze-controls select:hover { border-color: #58a6ff; }
-    .analyze-controls label { font-size: 0.75rem; color: #8b949e; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; }
+    .analyze-controls label.section-label { font-size: 0.75rem; color: #8b949e; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; }
+    .analyze-controls label.cb-label { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.8rem; color: #e1e4e8; cursor: pointer; }
+    .analyze-controls label.cb-label input[type=checkbox] { accent-color: #58a6ff; }
+    .analyze-controls label.cb-label.disabled { color: #484f58; cursor: default; }
+    .analyze-controls .separator { width: 1px; height: 1.2rem; background: #30363d; }
     .btn-analyze { padding: 0.4rem 1rem; border: 1px solid #30363d; border-radius: 6px; font-size: 0.8rem; font-weight: 600; background: none; color: #e1e4e8; cursor: pointer; transition: all 0.2s; }
     .btn-analyze:hover { border-color: #58a6ff; color: #58a6ff; }
     .btn-analyze.primary { background: #238636; border-color: #238636; color: #fff; }
     .btn-analyze.primary:hover { background: #2ea043; border-color: #2ea043; }
     .btn-analyze:disabled { opacity: 0.5; cursor: not-allowed; }
+    .sql-editor-wrap { padding: 0.4rem 2rem; position: relative; }
+    .sql-editor { width: 100%; min-height: 5rem; max-height: 20rem; padding: 0.5rem; border: 1px solid #30363d; border-radius: 6px; background: #0d1117; color: #79c0ff; font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace; font-size: 0.78rem; line-height: 1.5; resize: vertical; outline: none; tab-size: 2; }
+    .sql-editor:focus { border-color: #58a6ff; }
+    .sql-reset { position: absolute; top: 0.6rem; right: 2.5rem; font-size: 0.7rem; color: #58a6ff; cursor: pointer; background: #0d1117; padding: 0 0.3rem; display: none; }
+    .sql-reset:hover { color: #79c0ff; }
     .analyze-info { font-size: 0.75rem; color: #8b949e; padding: 0 2rem; }
     .analyze-table-wrap { padding: 0 2rem 1rem; overflow-x: auto; max-height: 60vh; overflow-y: auto; }
     .analyze-table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
@@ -142,20 +149,23 @@
 
   <div id="view-analyze" style="display:none">
     <div class="analyze-controls">
-      <label>Dataset</label>
-      <select id="analyzeDataset">
-        <option value="both">Scada + Price</option>
-        <option value="scada">Scada only</option>
-        <option value="price">Price only</option>
-      </select>
-      <label>Grain</label>
-      <select id="analyzeGrain">
-        <option value="5min">5-min (raw)</option>
-        <option value="hourly">Hourly</option>
-        <option value="daily">Daily</option>
-      </select>
+      <label class="section-label">Measures</label>
+      <label class="cb-label"><input type="checkbox" id="measGeneration" checked> Generation</label>
+      <label class="cb-label"><input type="checkbox" id="measPrice" checked> Price</label>
+      <div class="separator"></div>
+      <label class="section-label">Dimensions</label>
+      <label class="cb-label disabled"><input type="checkbox" checked disabled> Date</label>
+      <label class="cb-label"><input type="checkbox" id="dimTime"> Time</label>
+      <label class="cb-label"><input type="checkbox" id="dimDUID"> DUID</label>
+      <label class="cb-label"><input type="checkbox" id="dimFuel"> Fuel</label>
+      <label class="cb-label"><input type="checkbox" id="dimRegion"> Region</label>
+      <div class="separator"></div>
       <button class="btn-analyze" id="analyzePreview" type="button">Preview</button>
       <button class="btn-analyze primary" id="analyzeDownload" type="button">Download CSV</button>
+    </div>
+    <div class="sql-editor-wrap">
+      <textarea class="sql-editor" id="sqlEditor" spellcheck="false"></textarea>
+      <span class="sql-reset" id="sqlReset">Reset SQL</span>
     </div>
     <div class="analyze-info" id="analyzeInfo"></div>
     <div class="analyze-table-wrap">
@@ -335,6 +345,7 @@
       await conn.query("ATTACH 'energy_today.duckdb' AS today (READ_ONLY);");
       await conn.query("SET TimeZone = 'Australia/Brisbane';");
       await conn.query("SET preserve_insertion_order = false;");
+      await refreshViews();
 
       const sourceLabel = { 'opfs-hit': 'cached', 'opfs-miss': 'downloaded', 'opfs-refresh': 'refreshed' };
       console.log(`[OPFS] dim: ${sourceLabel[dimResult.source]}, today: ${sourceLabel[todayResult.source]}`);
@@ -347,6 +358,7 @@
       const aggResult = await cacheInOPFS(_db, `${_baseUrl}/data/energy_daily_agg.duckdb`, 'energy_daily_agg.duckdb');
       await conn.query("ATTACH 'energy_daily_agg.duckdb' AS agg (READ_ONLY);");
       aggLoaded = true;
+      await refreshViews();
       console.log(`[OPFS] agg: ${sourceLabel[aggResult.source]}`);
     }
 
@@ -387,6 +399,7 @@
         loadedPeriods.push(p);
         console.log(`[OPFS] p${p}: ${sourceLabel[results[i].source]}`);
       }
+      await refreshViews();
       setStatus(window._cutoffCached || "Connected", "connected");
     }
 
@@ -408,7 +421,37 @@
         loadedPeriods.push(p);
         console.log(`[OPFS] p${p}: ${sourceLabel[results[i].source]}`);
       }
+      await refreshViews();
       setStatus(window._cutoffCached || "Connected", "connected");
+    }
+
+    async function refreshViews() {
+      // v_scada: all loaded periods + today (5-min raw)
+      const scadaParts = loadedPeriods.map(p => `SELECT DUID, date, time, mw FROM p${p}.scada WHERE date < CURRENT_DATE - INTERVAL 5 DAY`);
+      scadaParts.push(`SELECT DUID, date, time, mw FROM today.scada_today WHERE date >= CURRENT_DATE - INTERVAL 5 DAY`);
+      await conn.query(`CREATE OR REPLACE VIEW v_scada AS ${scadaParts.join(' UNION ALL ')}`);
+
+      // v_price: all loaded periods + today (5-min raw)
+      const priceParts = loadedPeriods.map(p => `SELECT REGIONID, date, time, price FROM p${p}.price WHERE date < CURRENT_DATE - INTERVAL 5 DAY`);
+      priceParts.push(`SELECT REGIONID, date, time, price FROM today.price_today WHERE date >= CURRENT_DATE - INTERVAL 5 DAY`);
+      await conn.query(`CREATE OR REPLACE VIEW v_price AS ${priceParts.join(' UNION ALL ')}`);
+
+      // v_scada_daily / v_price_daily: pre-aggregated if agg loaded, else today-only
+      if (aggLoaded) {
+        await conn.query(`CREATE OR REPLACE VIEW v_scada_daily AS
+          SELECT DUID, date, mwh FROM agg.scada_daily WHERE date < CURRENT_DATE - INTERVAL 5 DAY
+          UNION ALL
+          SELECT DUID, date, CAST(SUM(mw) / 12.0 AS REAL) AS mwh FROM today.scada_today WHERE date >= CURRENT_DATE - INTERVAL 5 DAY GROUP BY DUID, date`);
+        await conn.query(`CREATE OR REPLACE VIEW v_price_daily AS
+          SELECT REGIONID, date, price FROM agg.price_daily WHERE date < CURRENT_DATE - INTERVAL 5 DAY
+          UNION ALL
+          SELECT REGIONID, date, CAST(AVG(price) AS REAL) AS price FROM today.price_today WHERE date >= CURRENT_DATE - INTERVAL 5 DAY GROUP BY REGIONID, date`);
+      } else {
+        await conn.query(`CREATE OR REPLACE VIEW v_scada_daily AS
+          SELECT DUID, date, CAST(SUM(mw) / 12.0 AS REAL) AS mwh FROM today.scada_today GROUP BY DUID, date`);
+        await conn.query(`CREATE OR REPLACE VIEW v_price_daily AS
+          SELECT REGIONID, date, CAST(AVG(price) AS REAL) AS price FROM today.price_today GROUP BY REGIONID, date`);
+      }
     }
 
     const _queryCache = new Map();
@@ -715,44 +758,6 @@
           SELECT CAST(COUNT(DISTINCT sc.DUID) AS INTEGER) AS cnt
           FROM ${sql.fromScada()}
           WHERE ${sql.whereScada()}`;
-      },
-
-      // --- CSV export (always raw 5-min grain) ---
-      _csvExportFrom(scadaSrc, priceSrc) {
-        const hasDuids = crossFilter.duids.length > 0 || !!document.getElementById("fuelFilter").value || !!document.getElementById("regionFilter").value;
-
-        const scadaFrom = `dim.dim_calendar c
-          JOIN (${scadaSrc}) sc ON c.date = sc.date
-          JOIN dim.dim_duid d ON sc.DUID = d.DUID`;
-        const priceJoin = `LEFT JOIN (${priceSrc}) p ON sc.date = p.date AND sc.time = p.time AND d.Region = p.REGIONID`;
-
-        if (hasDuids) {
-          return `
-            SELECT CAST(sc.date AS VARCHAR) AS date, lpad(CAST(sc.time AS VARCHAR), 4, '0') AS time,
-              sc.DUID, d.FuelSourceDescriptor AS fuel, d.Region AS region,
-              ROUND(sc.mw::DOUBLE, 2) AS mw, ROUND(p.price::DOUBLE, 2) AS price
-            FROM ${scadaFrom}
-            ${priceJoin}
-            WHERE ${sql.whereScada()}
-            ORDER BY sc.date, sc.time, sc.DUID`;
-        }
-        return `
-          SELECT CAST(sc.date AS VARCHAR) AS date, lpad(CAST(sc.time AS VARCHAR), 4, '0') AS time,
-            d.FuelSourceDescriptor AS fuel, d.Region AS region,
-            ROUND(SUM(sc.mw)::DOUBLE, 2) AS mw, ROUND(AVG(p.price)::DOUBLE, 2) AS price
-          FROM ${scadaFrom}
-          ${priceJoin}
-          WHERE ${sql.whereScada()}
-          GROUP BY sc.date, sc.time, d.FuelSourceDescriptor, d.Region
-          ORDER BY sc.date, sc.time, d.FuelSourceDescriptor`;
-      },
-
-      csvExport() {
-        return sql._csvExportFrom(sql._scadaRawUnion(), sql._priceRawUnion());
-      },
-
-      csvExportIntraday() {
-        return sql._csvExportFrom(sql._scadaIntradayUnion(), sql._priceIntradayUnion());
       },
 
       // --- Cutoff timestamp ---
@@ -1099,117 +1104,141 @@
         const tab = btn.dataset.tab;
         document.getElementById('view-dashboard').style.display = tab === 'dashboard' ? '' : 'none';
         document.getElementById('view-analyze').style.display = tab === 'analyze' ? '' : 'none';
+        if (tab === 'analyze' && !_sqlManualEdit) refreshSqlEditor();
       });
     }
 
+    // --- Analyze: SQL editor state ---
+    let _sqlManualEdit = false;
+
+    function refreshSqlEditor() {
+      const { measures } = getAnalyzeOptions();
+      if (!measures.generation && !measures.price) {
+        document.getElementById('sqlEditor').value = '-- Select at least one measure';
+        return;
+      }
+      document.getElementById('sqlEditor').value = buildAnalyzeSQL(null);
+      document.getElementById('sqlReset').style.display = 'none';
+      _sqlManualEdit = false;
+    }
+
+    document.getElementById('sqlEditor').addEventListener('input', () => {
+      _sqlManualEdit = true;
+      document.getElementById('sqlReset').style.display = '';
+    });
+
+    document.getElementById('sqlReset').addEventListener('click', () => {
+      refreshSqlEditor();
+      clearAnalyzePreview();
+    });
+
+    // --- Analyze: read checkboxes ---
+    function getAnalyzeOptions() {
+      return {
+        measures: {
+          generation: document.getElementById('measGeneration').checked,
+          price: document.getElementById('measPrice').checked,
+        },
+        dimensions: {
+          time: document.getElementById('dimTime').checked,
+          duid: document.getElementById('dimDUID').checked,
+          fuel: document.getElementById('dimFuel').checked,
+          region: document.getElementById('dimRegion').checked,
+        },
+      };
+    }
+
     // --- Analyze: query builder ---
-    function buildAnalyzeSQL(dataset, grain, limit) {
-      const { from, to } = getDateRange();
+    function buildAnalyzeSQL(limit) {
+      const { measures, dimensions } = getAnalyzeOptions();
+      const hasGen = measures.generation;
+      const hasPrice = measures.price;
+      const raw = dimensions.time; // time dimension = 5-min raw, else daily
 
-      function scadaCols(alias) {
-        if (grain === '5min') return `CAST(${alias}.date AS VARCHAR) AS date, lpad(CAST(${alias}.time AS VARCHAR), 4, '0') AS time, ${alias}.DUID, d.FuelSourceDescriptor AS fuel, d.Region AS region, ROUND(${alias}.mw::DOUBLE, 2) AS mw`;
-        if (grain === 'hourly') return `CAST(${alias}.date AS VARCHAR) AS date, lpad(CAST(CAST(floor(${alias}.time / 100) * 100 AS INTEGER) AS VARCHAR), 4, '0') AS hour, ${alias}.DUID, d.FuelSourceDescriptor AS fuel, d.Region AS region, ROUND(SUM(${alias}.mw)::DOUBLE, 2) AS sum_mw`;
-        return `CAST(${alias}.date AS VARCHAR) AS date, ${alias}.DUID, d.FuelSourceDescriptor AS fuel, d.Region AS region, ROUND(${alias}.mwh::DOUBLE, 2) AS mwh`;
+      // Build SELECT columns, GROUP BY, ORDER BY
+      const selectCols = ['CAST(sc.date AS VARCHAR) AS date'];
+      const groupCols = ['sc.date'];
+      const orderCols = ['sc.date'];
+
+      // For price-only mode, use p. alias
+      const selDate = hasGen ? 'CAST(sc.date AS VARCHAR) AS date' : 'CAST(p.date AS VARCHAR) AS date';
+      const grpDate = hasGen ? 'sc.date' : 'p.date';
+
+      const sel = [selDate];
+      const grp = [grpDate];
+      const ord = [grpDate];
+
+      if (raw) {
+        const timeAlias = hasGen ? 'sc' : 'p';
+        sel.push(`lpad(CAST(${timeAlias}.time AS VARCHAR), 4, '0') AS time`);
+        grp.push(`${timeAlias}.time`);
+        ord.push(`${timeAlias}.time`);
       }
 
-      function scadaGroupBy(alias) {
-        if (grain === 'hourly') return `GROUP BY ${alias}.date, floor(${alias}.time / 100), ${alias}.DUID, d.FuelSourceDescriptor, d.Region`;
-        return '';
+      if (dimensions.duid && hasGen) { sel.push('sc.DUID'); grp.push('sc.DUID'); ord.push('sc.DUID'); }
+      if (dimensions.fuel && hasGen) { sel.push('d.FuelSourceDescriptor AS fuel'); grp.push('d.FuelSourceDescriptor'); }
+      if (dimensions.region) {
+        if (hasGen) { sel.push('d.Region AS region'); grp.push('d.Region'); }
+        else { sel.push('p.REGIONID AS region'); grp.push('p.REGIONID'); }
       }
 
-      function scadaOrderBy(alias) {
-        if (grain === '5min') return `ORDER BY ${alias}.date, ${alias}.time, ${alias}.DUID`;
-        if (grain === 'hourly') return `ORDER BY ${alias}.date, hour, ${alias}.DUID`;
-        return `ORDER BY ${alias}.date, ${alias}.DUID`;
+      // Measures
+      if (hasGen) {
+        if (raw) sel.push('ROUND(SUM(sc.mw)::DOUBLE, 2) AS mw');
+        else sel.push('ROUND(SUM(sc.mwh)::DOUBLE, 2) AS mwh');
+      }
+      if (hasPrice) {
+        sel.push('ROUND(AVG(p.price)::DOUBLE, 2) AS price');
       }
 
-      function priceCols(alias) {
-        if (grain === '5min') return `CAST(${alias}.date AS VARCHAR) AS date, lpad(CAST(${alias}.time AS VARCHAR), 4, '0') AS time, ${alias}.REGIONID, ROUND(${alias}.price::DOUBLE, 2) AS price`;
-        if (grain === 'hourly') return `CAST(${alias}.date AS VARCHAR) AS date, lpad(CAST(CAST(floor(${alias}.time / 100) * 100 AS INTEGER) AS VARCHAR), 4, '0') AS hour, ${alias}.REGIONID, ROUND(AVG(${alias}.price)::DOUBLE, 2) AS avg_price`;
-        return `CAST(${alias}.date AS VARCHAR) AS date, ${alias}.REGIONID, ROUND(${alias}.price::DOUBLE, 2) AS avg_price`;
-      }
-
-      function priceGroupBy(alias) {
-        if (grain === 'hourly') return `GROUP BY ${alias}.date, floor(${alias}.time / 100), ${alias}.REGIONID`;
-        return '';
-      }
-
-      function priceOrderBy(alias) {
-        if (grain === '5min') return `ORDER BY ${alias}.date, ${alias}.time, ${alias}.REGIONID`;
-        if (grain === 'hourly') return `ORDER BY ${alias}.date, hour, ${alias}.REGIONID`;
-        return `ORDER BY ${alias}.date, ${alias}.REGIONID`;
-      }
-
-      function scadaFrom() {
-        if (grain === 'daily') {
-          return `(${sql._scadaDailyUnion()}) sc
-            JOIN dim.dim_calendar c ON c.date = sc.date
-            JOIN dim.dim_duid d ON sc.DUID = d.DUID`;
-        }
-        return `(${sql._scadaRawUnion()}) sc
+      // FROM clause
+      let from;
+      if (hasGen && hasPrice) {
+        const scView = raw ? 'v_scada' : 'v_scada_daily';
+        const prView = raw ? 'v_price' : 'v_price_daily';
+        const timeJoin = raw ? 'AND sc.time = p.time' : '';
+        from = `${scView} sc
+          JOIN dim.dim_calendar c ON c.date = sc.date
+          JOIN dim.dim_duid d ON sc.DUID = d.DUID
+          LEFT JOIN ${prView} p ON sc.date = p.date ${timeJoin} AND d.Region = p.REGIONID`;
+      } else if (hasGen) {
+        const scView = raw ? 'v_scada' : 'v_scada_daily';
+        from = `${scView} sc
           JOIN dim.dim_calendar c ON c.date = sc.date
           JOIN dim.dim_duid d ON sc.DUID = d.DUID`;
-      }
-
-      function priceFrom() {
-        if (grain === 'daily') {
-          return `(${sql._priceDailyUnion()}) p
-            JOIN dim.dim_calendar c ON c.date = p.date`;
-        }
-        return `(${sql._priceRawUnion()}) p
+      } else {
+        const prView = raw ? 'v_price' : 'v_price_daily';
+        from = `${prView} p
           JOIN dim.dim_calendar c ON c.date = p.date`;
       }
 
-      let inner;
-      if (dataset === 'scada') {
-        inner = `SELECT ${scadaCols('sc')} FROM ${scadaFrom()} WHERE ${sql.whereScada()} ${scadaGroupBy('sc')} ${scadaOrderBy('sc')}`;
-      } else if (dataset === 'price') {
-        inner = `SELECT ${priceCols('p')} FROM ${priceFrom()} WHERE ${sql.wherePrice()} ${priceGroupBy('p')} ${priceOrderBy('p')}`;
-      } else {
-        // Both: join scada + price
-        const timeJoin = grain === 'daily' ? '' : 'AND sc.time = p.time';
-        const scadaSrc = grain === 'daily' ? sql._scadaDailyUnion() : sql._scadaRawUnion();
-        const priceSrc = grain === 'daily' ? sql._priceDailyUnion() : sql._priceRawUnion();
-        const scFrom = `dim.dim_calendar c
-          JOIN (${scadaSrc}) sc ON c.date = sc.date
-          JOIN dim.dim_duid d ON sc.DUID = d.DUID
-          LEFT JOIN (${priceSrc}) p ON sc.date = p.date ${timeJoin} AND d.Region = p.REGIONID`;
+      // WHERE
+      const where = hasGen ? sql.whereScada() : sql.wherePrice();
 
-        if (grain === '5min') {
-          inner = `SELECT CAST(sc.date AS VARCHAR) AS date, lpad(CAST(sc.time AS VARCHAR), 4, '0') AS time,
-            sc.DUID, d.FuelSourceDescriptor AS fuel, d.Region AS region,
-            ROUND(sc.mw::DOUBLE, 2) AS mw, ROUND(p.price::DOUBLE, 2) AS price
-            FROM ${scFrom} WHERE ${sql.whereScada()} ORDER BY sc.date, sc.time, sc.DUID`;
-        } else if (grain === 'hourly') {
-          inner = `SELECT CAST(sc.date AS VARCHAR) AS date, lpad(CAST(CAST(floor(sc.time / 100) * 100 AS INTEGER) AS VARCHAR), 4, '0') AS hour,
-            sc.DUID, d.FuelSourceDescriptor AS fuel, d.Region AS region,
-            ROUND(SUM(sc.mw)::DOUBLE, 2) AS sum_mw, ROUND(AVG(p.price)::DOUBLE, 2) AS avg_price
-            FROM ${scFrom} WHERE ${sql.whereScada()}
-            GROUP BY sc.date, floor(sc.time / 100), sc.DUID, d.FuelSourceDescriptor, d.Region
-            ORDER BY sc.date, hour, sc.DUID`;
-        } else {
-          inner = `SELECT CAST(sc.date AS VARCHAR) AS date,
-            sc.DUID, d.FuelSourceDescriptor AS fuel, d.Region AS region,
-            ROUND(sc.mwh::DOUBLE, 2) AS mwh, ROUND(p.price::DOUBLE, 2) AS avg_price
-            FROM ${scFrom} WHERE ${sql.whereScada()} ORDER BY sc.date, sc.DUID`;
-        }
-      }
+      const inner = `SELECT ${sel.join(', ')}\nFROM ${from}\nWHERE ${where}\nGROUP BY ${grp.join(', ')}\nORDER BY ${ord.join(', ')}`;
 
       if (limit) return `SELECT * FROM (${inner}) LIMIT ${limit}`;
       return inner;
     }
 
-    // --- Analyze: ensure data loaded for grain ---
-    async function ensureDataForGrain(grain) {
-      if (grain === 'daily') {
-        if (!aggLoaded) await loadDailyAggDatabase();
-      } else {
+    // --- Analyze: ensure data loaded ---
+    async function ensureAnalyzeData() {
+      const { dimensions } = getAnalyzeOptions();
+      if (dimensions.time) {
         await ensureAllPeriods();
+      } else {
+        if (!aggLoaded) await loadDailyAggDatabase();
       }
     }
 
     // --- Analyze: preview ---
     async function analyzePreview() {
+      const { measures } = getAnalyzeOptions();
+      if (!measures.generation && !measures.price) {
+        document.getElementById('analyzeInfo').textContent = 'Select at least one measure.';
+        return;
+      }
+
       const btn = document.getElementById('analyzePreview');
       btn.disabled = true;
       btn.textContent = 'Loading...';
@@ -1219,12 +1248,15 @@
       info.textContent = '';
 
       try {
-        const dataset = document.getElementById('analyzeDataset').value;
-        const grain = document.getElementById('analyzeGrain').value;
-        await ensureDataForGrain(grain);
-
+        await ensureAnalyzeData();
         setStatus("Previewing...", "loading");
-        const previewSql = buildAnalyzeSQL(dataset, grain, 500);
+        const userSql = document.getElementById('sqlEditor').value.trim();
+        if (!userSql || userSql.startsWith('--')) {
+          info.textContent = 'Enter a valid SQL query.';
+          setStatus(window._cutoffCached || "Connected", "connected");
+          return;
+        }
+        const previewSql = `SELECT * FROM (${userSql}) LIMIT 500`;
         const rows = await runQuery(previewSql);
 
         if (!rows.length) {
@@ -1241,8 +1273,7 @@
         html += '</tbody>';
         table.innerHTML = html;
 
-        // Get total count
-        const countSql = `SELECT COUNT(*) AS cnt FROM (${buildAnalyzeSQL(dataset, grain, null)})`;
+        const countSql = `SELECT COUNT(*) AS cnt FROM (${userSql})`;
         const countResult = await runQuery(countSql);
         const total = countResult[0]?.cnt || rows.length;
         info.textContent = rows.length < total
@@ -1266,20 +1297,28 @@
 
     // --- Analyze: download ---
     async function analyzeDownload() {
+      const { measures } = getAnalyzeOptions();
+      if (!measures.generation && !measures.price) {
+        alert('Select at least one measure.');
+        return;
+      }
+
       const btn = document.getElementById('analyzeDownload');
       btn.disabled = true;
       btn.textContent = 'Loading...';
 
       try {
-        const dataset = document.getElementById('analyzeDataset').value;
-        const grain = document.getElementById('analyzeGrain').value;
-        await ensureDataForGrain(grain);
-
+        await ensureAnalyzeData();
         btn.textContent = 'Exporting...';
         setStatus("Exporting CSV...", "loading");
-        const exportSql = `SELECT * FROM (${buildAnalyzeSQL(dataset, grain, null)}) LIMIT 1000000`;
+        const userSql = document.getElementById('sqlEditor').value.trim();
+        if (!userSql || userSql.startsWith('--')) {
+          alert('Enter a valid SQL query.');
+          return;
+        }
+        const exportSql = `SELECT * FROM (${userSql}) LIMIT 1000000`;
         const { from, to } = getDateRange();
-        const filename = `energy_${dataset}_${grain}_${from}_${to}.csv`;
+        const filename = `energy_export_${from}_${to}.csv`;
         const rowCount = await downloadCSVDirect(exportSql, filename);
         setStatus(`Exported ${rowCount.toLocaleString()} rows`, "connected");
         if (rowCount >= 1000000) {
@@ -1301,6 +1340,12 @@
 
     document.getElementById('analyzePreview').addEventListener('click', analyzePreview);
     document.getElementById('analyzeDownload').addEventListener('click', analyzeDownload);
+    for (const id of ['measGeneration', 'measPrice', 'dimTime', 'dimDUID', 'dimFuel', 'dimRegion']) {
+      document.getElementById(id).addEventListener('change', () => {
+        if (!_sqlManualEdit) refreshSqlEditor();
+        clearAnalyzePreview();
+      });
+    }
 
     // --- Filter population ---
     async function populateFilters() {
@@ -1341,6 +1386,7 @@
         updateDuidTrigger();
         clearQueryCache();
         clearAnalyzePreview();
+        if (!_sqlManualEdit) refreshSqlEditor();
         renderAll();
       });
     }
@@ -1352,6 +1398,7 @@
         crossFilter.duids = [];
         updateDuidTrigger();
         clearAnalyzePreview();
+        if (!_sqlManualEdit) refreshSqlEditor();
         renderAll();
       });
     }
