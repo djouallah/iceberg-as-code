@@ -408,15 +408,36 @@
         : [];
     }
 
+    function yieldToUI() { return new Promise(r => setTimeout(r, 0)); }
+
     async function downloadCSVDirect(sqlStr, filename) {
       const exportConn = await _db.connect();
       try {
-        const csvPath = `/${filename}`;
-        const result = await exportConn.query(`COPY (${sqlStr}) TO '${csvPath}' (FORMAT CSV, HEADER)`);
-        const rowCount = Number(result.getChild('Count').get(0));
-        const buf = await _db.copyFileToBuffer(csvPath);
-        await _db.dropFile(csvPath);
-        const blob = new Blob([buf], { type: 'text/csv' });
+        await exportConn.send(`BEGIN`);
+        const reader = await exportConn.send(sqlStr);
+        const chunks = [];
+        let headerWritten = false;
+        let rowCount = 0;
+        for await (const batch of reader) {
+          const cols = batch.schema.fields.map(f => f.name);
+          if (!headerWritten) {
+            chunks.push(cols.join(',') + '\n');
+            headerWritten = true;
+          }
+          const n = Number(batch.numRows);
+          for (let i = 0; i < n; i++) {
+            const vals = cols.map(c => {
+              let v = batch.getChild(c).get(i);
+              if (typeof v === 'bigint') v = Number(v);
+              return v ?? '';
+            });
+            chunks.push(vals.join(',') + '\n');
+          }
+          rowCount += n;
+          await yieldToUI();
+        }
+        await exportConn.send(`COMMIT`);
+        const blob = new Blob(chunks, { type: 'text/csv' });
         const a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
         a.download = filename;
