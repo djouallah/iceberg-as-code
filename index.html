@@ -231,7 +231,7 @@
           const file = await handle.getFile();
           const sizeMB = (file.size / 1024 / 1024).toFixed(1);
           console.log(`[OPFS] Cache hit for ${filename} (${sizeMB} MB)`);
-          await db.registerFileBuffer(filename, new Uint8Array(await file.arrayBuffer()));
+          await db.registerFileHandle(filename, handle, duckdb.DuckDBDataProtocol.BROWSER_FSACCESS, true);
           return { source: 'opfs-hit' };
         } catch (e) {
           console.log(`[OPFS] Cache entry missing from OPFS despite etag, will re-fetch`);
@@ -255,7 +255,7 @@
       if (remoteTag) localStorage.setItem(cacheKey, remoteTag);
       console.log(`[OPFS] Cached ${filename} (${sizeMB} MB) in OPFS`);
 
-      await db.registerFileBuffer(filename, buffer);
+      await db.registerFileHandle(filename, handle, duckdb.DuckDBDataProtocol.BROWSER_FSACCESS, true);
       return { source: cachedTag ? 'opfs-refresh' : 'opfs-miss' };
     }
 
@@ -274,7 +274,7 @@
       _db = new duckdb.AsyncDuckDB(logger, worker);
       await _db.instantiate(bundle.mainModule, bundle.pthreadWorker);
       URL.revokeObjectURL(workerUrl);
-      await _db.open({ path: 'energy.db', accessMode: 'READ_WRITE' });
+      await _db.open({ path: 'opfs://energy.db', accessMode: duckdb.DuckDBAccessMode.READ_WRITE });
 
       conn = await _db.connect();
       _baseUrl = window.location.href.replace(/\/[^/]*$/, "");
@@ -411,36 +411,18 @@
         : [];
     }
 
-    function yieldToUI() { return new Promise(r => setTimeout(r, 0)); }
-
     async function downloadCSVDirect(sqlStr, filename) {
       const exportConn = await _db.connect();
       try {
-        await exportConn.send(`BEGIN`);
-        const reader = await exportConn.send(sqlStr);
-        const chunks = [];
-        let headerWritten = false;
-        let rowCount = 0;
-        for await (const batch of reader) {
-          const cols = batch.schema.fields.map(f => f.name);
-          if (!headerWritten) {
-            chunks.push(cols.join(',') + '\n');
-            headerWritten = true;
-          }
-          const n = Number(batch.numRows);
-          for (let i = 0; i < n; i++) {
-            const vals = cols.map(c => {
-              let v = batch.getChild(c).get(i);
-              if (typeof v === 'bigint') v = Number(v);
-              return v ?? '';
-            });
-            chunks.push(vals.join(',') + '\n');
-          }
-          rowCount += n;
-          await yieldToUI();
-        }
-        await exportConn.send(`COMMIT`);
-        const blob = new Blob(chunks, { type: 'text/csv' });
+        const opfsRoot = await navigator.storage.getDirectory();
+        const fileHandle = await opfsRoot.getFileHandle(filename, { create: true });
+        await _db.registerFileHandle(filename, fileHandle, duckdb.DuckDBDataProtocol.BROWSER_FSACCESS, true);
+        const result = await exportConn.query(`COPY (${sqlStr}) TO '${filename}' (FORMAT CSV, HEADER)`);
+        const rowCount = Number(result.getChild('Count').get(0));
+        const file = await fileHandle.getFile();
+        const blob = new Blob([await file.arrayBuffer()], { type: 'text/csv' });
+        await _db.dropFile(filename);
+        await opfsRoot.removeEntry(filename).catch(() => {});
         const a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
         a.download = filename;
