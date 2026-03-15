@@ -274,6 +274,7 @@
       _db = new duckdb.AsyncDuckDB(logger, worker);
       await _db.instantiate(bundle.mainModule, bundle.pthreadWorker);
       URL.revokeObjectURL(workerUrl);
+      await _db.open({ path: 'energy.db', accessMode: 'READ_WRITE' });
 
       conn = await _db.connect();
       _baseUrl = window.location.href.replace(/\/[^/]*$/, "");
@@ -287,6 +288,8 @@
       await conn.query("ATTACH 'energy_dim.duckdb' AS dim (READ_ONLY);");
       await conn.query("ATTACH 'energy_today.duckdb' AS today (READ_ONLY);");
       await conn.query("SET TimeZone = 'Australia/Brisbane';");
+      await conn.query("SET temp_directory = '/tmp';");
+      await conn.query("SET preserve_insertion_order = false;");
 
       const sourceLabel = { 'opfs-hit': 'cached', 'opfs-miss': 'downloaded', 'opfs-refresh': 'refreshed' };
       console.log(`[OPFS] dim: ${sourceLabel[dimResult.source]}, today: ${sourceLabel[todayResult.source]}`);
@@ -969,10 +972,15 @@
         const rowCount = await downloadCSVDirect(limitedSql, 'energy_5min.csv');
         setStatus(`Exported ${rowCount.toLocaleString()} rows`, "connected");
         if (rowCount >= 1000000) {
-          alert('Export capped at 1,048,576 rows (Excel limit). Apply filters or reduce the date range for complete data.');
+          alert('Export capped at 1,000,000 rows. Apply filters or reduce the date range for complete data.');
         }
       } catch (e) {
-        setStatus("CSV export error: " + e.message, "error");
+        if (e.message && e.message.includes('Out of Memory')) {
+          setStatus("Export failed: out of memory", "error");
+          alert('Out of memory. Apply filters (region, fuel, DUID) or reduce the date range to export fewer rows.');
+        } else {
+          setStatus("CSV export error: " + e.message, "error");
+        }
         console.error('[CSV]', e);
       } finally {
         btn.disabled = false;
