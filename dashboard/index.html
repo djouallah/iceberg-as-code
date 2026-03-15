@@ -599,7 +599,7 @@
           return `
             SELECT CAST(sc.date AS VARCHAR) AS date, lpad(CAST(sc.time AS VARCHAR), 4, '0') AS time,
               sc.DUID, d.FuelSourceDescriptor AS fuel, d.Region AS region,
-              ROUND(sc.mw, 2)::DOUBLE AS mw, ROUND(p.price, 2)::DOUBLE AS price
+              ROUND(sc.mw::DOUBLE, 2) AS mw, ROUND(p.price::DOUBLE, 2) AS price
             FROM ${scadaFrom}
             ${priceJoin}
             WHERE ${sql.whereScada()}
@@ -608,7 +608,7 @@
         return `
           SELECT CAST(sc.date AS VARCHAR) AS date, lpad(CAST(sc.time AS VARCHAR), 4, '0') AS time,
             d.FuelSourceDescriptor AS fuel, d.Region AS region,
-            ROUND(SUM(sc.mw), 2)::DOUBLE AS mw, ROUND(AVG(p.price), 2)::DOUBLE AS price
+            ROUND(SUM(sc.mw)::DOUBLE, 2) AS mw, ROUND(AVG(p.price)::DOUBLE, 2) AS price
           FROM ${scadaFrom}
           ${priceJoin}
           WHERE ${sql.whereScada()}
