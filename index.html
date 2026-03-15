@@ -538,11 +538,11 @@
         return parts.join('\n            UNION ALL\n            ');
       },
 
-      // --- Intraday UNION builders (selected periods + today) ---
+      // --- Intraday UNION builders (selected periods + today, deduped) ---
       _scadaIntradayUnion() {
         const { from, to } = getDateRange();
         const needed = periodsForRange(from, to).filter(p => _attachedPeriods.has(p));
-        const parts = needed.map(p => `SELECT DUID, date, time, mw FROM p${p}.scada`);
+        const parts = needed.map(p => `SELECT DUID, date, time, mw FROM p${p}.scada WHERE date < CURRENT_DATE - INTERVAL 5 DAY`);
         parts.push(`SELECT DUID, date, time, mw FROM today.scada_today`);
         return parts.join('\n            UNION ALL\n            ');
       },
@@ -550,7 +550,7 @@
       _priceIntradayUnion() {
         const { from, to } = getDateRange();
         const needed = periodsForRange(from, to).filter(p => _attachedPeriods.has(p));
-        const parts = needed.map(p => `SELECT REGIONID, date, time, price FROM p${p}.price`);
+        const parts = needed.map(p => `SELECT REGIONID, date, time, price FROM p${p}.price WHERE date < CURRENT_DATE - INTERVAL 5 DAY`);
         parts.push(`SELECT REGIONID, date, time, price FROM today.price_today`);
         return parts.join('\n            UNION ALL\n            ');
       },
