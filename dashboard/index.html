@@ -291,7 +291,7 @@
       const sourceLabel = { 'opfs-hit': 'cached', 'opfs-miss': 'downloaded', 'opfs-refresh': 'refreshed' };
       console.log(`[OPFS] dim: ${sourceLabel[dimResult.source]}, today: ${sourceLabel[todayResult.source]}`);
       console.log(`[DuckDB] crossOriginIsolated: ${window.crossOriginIsolated} (${window.crossOriginIsolated ? 'multi-threaded' : 'single-threaded'})`);
-      setStatus("Connected", "connected");
+      setStatus(window._cutoffCached || "Connected", "connected");
     }
 
     async function loadDailyAggDatabase() {
@@ -1025,7 +1025,7 @@
           if (seq !== _renderSeq) return;
           if (cutoffResult.length && cutoffResult[0].last_update) {
             const updated = new Date(cutoffResult[0].last_update).toLocaleString("en-AU", { timeZone: "Australia/Brisbane", dateStyle: "medium", timeStyle: "short" });
-            window._cutoffCached = `Data through: ${updated} AEST`;
+            window._cutoffCached = `${updated} AEST`;
           }
         }
         setStatus(window._cutoffCached || "Connected", "connected");
