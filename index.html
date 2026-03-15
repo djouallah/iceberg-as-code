@@ -51,9 +51,26 @@
     .duid-list label { display: flex; align-items: center; gap: 0.4rem; padding: 0.25rem 0.5rem; cursor: pointer; font-size: 0.75rem; color: #e1e4e8; text-transform: none; letter-spacing: normal; font-weight: 400; }
     .duid-list label:hover { background: rgba(88,166,255,0.1); }
     .duid-list input[type=checkbox] { accent-color: #58a6ff; }
-    .btn-csv-main { padding: 0.35rem 0.8rem; border: 1px solid #30363d; border-radius: 6px; font-size: 0.75rem; background: none; color: #8b949e; cursor: pointer; transition: all 0.2s; white-space: nowrap; }
-    .btn-csv-main:hover { border-color: #58a6ff; color: #58a6ff; }
     .chart-container { width: 100%; }
+    .tab-bar { display: flex; gap: 0; padding: 0 2rem; border-bottom: 1px solid #30363d; background: #0f1117; }
+    .tab-btn { padding: 0.5rem 1.2rem; font-size: 0.8rem; font-weight: 600; color: #8b949e; background: none; border: none; border-bottom: 2px solid transparent; cursor: pointer; transition: all 0.2s; }
+    .tab-btn:hover { color: #e1e4e8; }
+    .tab-btn.active { color: #58a6ff; border-bottom-color: #58a6ff; }
+    .analyze-controls { display: flex; gap: 0.8rem; padding: 0.8rem 2rem; align-items: center; flex-wrap: wrap; }
+    .analyze-controls select { padding: 0.35rem 0.6rem; border: 1px solid #30363d; border-radius: 6px; font-size: 0.8rem; background: #0d1117; color: #e1e4e8; cursor: pointer; outline: none; }
+    .analyze-controls select:hover { border-color: #58a6ff; }
+    .analyze-controls label { font-size: 0.75rem; color: #8b949e; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; }
+    .btn-analyze { padding: 0.4rem 1rem; border: 1px solid #30363d; border-radius: 6px; font-size: 0.8rem; font-weight: 600; background: none; color: #e1e4e8; cursor: pointer; transition: all 0.2s; }
+    .btn-analyze:hover { border-color: #58a6ff; color: #58a6ff; }
+    .btn-analyze.primary { background: #238636; border-color: #238636; color: #fff; }
+    .btn-analyze.primary:hover { background: #2ea043; border-color: #2ea043; }
+    .btn-analyze:disabled { opacity: 0.5; cursor: not-allowed; }
+    .analyze-info { font-size: 0.75rem; color: #8b949e; padding: 0 2rem; }
+    .analyze-table-wrap { padding: 0 2rem 1rem; overflow-x: auto; max-height: 60vh; overflow-y: auto; }
+    .analyze-table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
+    .analyze-table th { position: sticky; top: 0; background: #161b22; color: #8b949e; text-transform: uppercase; letter-spacing: 0.05em; font-size: 0.7rem; font-weight: 600; padding: 0.4rem 0.6rem; border-bottom: 1px solid #30363d; text-align: left; }
+    .analyze-table td { padding: 0.3rem 0.6rem; border-bottom: 1px solid #21262d; color: #e1e4e8; }
+    .analyze-table tr:hover td { background: rgba(88,166,255,0.05); }
     @media (max-width: 900px) { .charts { grid-template-columns: 1fr; } .kpi-row { flex-direction: column; } }
   </style>
 </head>
@@ -88,13 +105,17 @@
       <label>To</label>
       <input type="date" id="dateTo" style="padding:0.35rem 0.4rem;border:1px solid #30363d;border-radius:6px;font-size:0.8rem;background:#0d1117;color:#e1e4e8;cursor:pointer;outline:none;">
     </div>
-    <button class="btn-csv-main" id="dl-all" type="button">Download CSV</button>
     <a href="https://github.com/djouallah/analytics-as-code" target="_blank" style="color:#8b949e;text-decoration:none;display:inline-flex;align-items:center;gap:3px;" title="View on GitHub"><svg height="16" width="16" viewBox="0 0 16 16" fill="#8b949e"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 2-.27c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg></a>
     <a href="dag/" target="_blank" style="color:#8b949e;text-decoration:none;font-size:0.75rem;font-weight:600;letter-spacing:0.05em;" title="View dbt DAG">DAG</a>
     <div id="status" class="loading"><span class="dot"></span><span id="statusText">Initializing DuckDB...</span></div>
   </header>
   <div class="active-filters" id="activeFilters"></div>
+  <div class="tab-bar">
+    <button class="tab-btn active" data-tab="dashboard">Dashboard</button>
+    <button class="tab-btn" data-tab="analyze">Analyze</button>
+  </div>
 
+  <div id="view-dashboard">
   <div class="kpi-row">
     <div class="kpi-card"><div class="kpi-label">Total Generation</div><div class="kpi-value" id="kpiGen">--</div><div class="kpi-sub" id="kpiGenSub">Average MW</div></div>
     <div class="kpi-card"><div class="kpi-label">Avg Price</div><div class="kpi-value" id="kpiPrice">--</div><div class="kpi-sub">$/MWh across regions</div></div>
@@ -115,6 +136,30 @@
     </div>
     <div class="chart-card">
       <div class="chart-container" id="chart-map" style="height:280px;"></div>
+    </div>
+  </div>
+  </div>
+
+  <div id="view-analyze" style="display:none">
+    <div class="analyze-controls">
+      <label>Dataset</label>
+      <select id="analyzeDataset">
+        <option value="both">Scada + Price</option>
+        <option value="scada">Scada only</option>
+        <option value="price">Price only</option>
+      </select>
+      <label>Grain</label>
+      <select id="analyzeGrain">
+        <option value="5min">5-min (raw)</option>
+        <option value="hourly">Hourly</option>
+        <option value="daily">Daily</option>
+      </select>
+      <button class="btn-analyze" id="analyzePreview" type="button">Preview</button>
+      <button class="btn-analyze primary" id="analyzeDownload" type="button">Download CSV</button>
+    </div>
+    <div class="analyze-info" id="analyzeInfo"></div>
+    <div class="analyze-table-wrap">
+      <table class="analyze-table" id="analyzeTable"></table>
     </div>
   </div>
 
@@ -1046,25 +1091,196 @@
     document.addEventListener('click', () => document.getElementById('duidPanel').classList.remove('open'));
     document.getElementById('duidSearch').addEventListener('input', e => renderDuidList(e.target.value));
 
-    // --- CSV download ---
-    async function downloadAllCSV() {
-      const btn = document.getElementById('dl-all');
+    // --- Tab switching ---
+    for (const btn of document.querySelectorAll('.tab-btn')) {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        const tab = btn.dataset.tab;
+        document.getElementById('view-dashboard').style.display = tab === 'dashboard' ? '' : 'none';
+        document.getElementById('view-analyze').style.display = tab === 'analyze' ? '' : 'none';
+      });
+    }
+
+    // --- Analyze: query builder ---
+    function buildAnalyzeSQL(dataset, grain, limit) {
+      const { from, to } = getDateRange();
+
+      function scadaCols(alias) {
+        if (grain === '5min') return `CAST(${alias}.date AS VARCHAR) AS date, lpad(CAST(${alias}.time AS VARCHAR), 4, '0') AS time, ${alias}.DUID, d.FuelSourceDescriptor AS fuel, d.Region AS region, ROUND(${alias}.mw::DOUBLE, 2) AS mw`;
+        if (grain === 'hourly') return `CAST(${alias}.date AS VARCHAR) AS date, lpad(CAST(CAST(floor(${alias}.time / 100) * 100 AS INTEGER) AS VARCHAR), 4, '0') AS hour, ${alias}.DUID, d.FuelSourceDescriptor AS fuel, d.Region AS region, ROUND(SUM(${alias}.mw)::DOUBLE, 2) AS sum_mw`;
+        return `CAST(${alias}.date AS VARCHAR) AS date, ${alias}.DUID, d.FuelSourceDescriptor AS fuel, d.Region AS region, ROUND(${alias}.mwh::DOUBLE, 2) AS mwh`;
+      }
+
+      function scadaGroupBy(alias) {
+        if (grain === 'hourly') return `GROUP BY ${alias}.date, floor(${alias}.time / 100), ${alias}.DUID, d.FuelSourceDescriptor, d.Region`;
+        return '';
+      }
+
+      function scadaOrderBy(alias) {
+        if (grain === '5min') return `ORDER BY ${alias}.date, ${alias}.time, ${alias}.DUID`;
+        if (grain === 'hourly') return `ORDER BY ${alias}.date, hour, ${alias}.DUID`;
+        return `ORDER BY ${alias}.date, ${alias}.DUID`;
+      }
+
+      function priceCols(alias) {
+        if (grain === '5min') return `CAST(${alias}.date AS VARCHAR) AS date, lpad(CAST(${alias}.time AS VARCHAR), 4, '0') AS time, ${alias}.REGIONID, ROUND(${alias}.price::DOUBLE, 2) AS price`;
+        if (grain === 'hourly') return `CAST(${alias}.date AS VARCHAR) AS date, lpad(CAST(CAST(floor(${alias}.time / 100) * 100 AS INTEGER) AS VARCHAR), 4, '0') AS hour, ${alias}.REGIONID, ROUND(AVG(${alias}.price)::DOUBLE, 2) AS avg_price`;
+        return `CAST(${alias}.date AS VARCHAR) AS date, ${alias}.REGIONID, ROUND(${alias}.price::DOUBLE, 2) AS avg_price`;
+      }
+
+      function priceGroupBy(alias) {
+        if (grain === 'hourly') return `GROUP BY ${alias}.date, floor(${alias}.time / 100), ${alias}.REGIONID`;
+        return '';
+      }
+
+      function priceOrderBy(alias) {
+        if (grain === '5min') return `ORDER BY ${alias}.date, ${alias}.time, ${alias}.REGIONID`;
+        if (grain === 'hourly') return `ORDER BY ${alias}.date, hour, ${alias}.REGIONID`;
+        return `ORDER BY ${alias}.date, ${alias}.REGIONID`;
+      }
+
+      function scadaFrom() {
+        if (grain === 'daily') {
+          return `(${sql._scadaDailyUnion()}) sc
+            JOIN dim.dim_calendar c ON c.date = sc.date
+            JOIN dim.dim_duid d ON sc.DUID = d.DUID`;
+        }
+        return `(${sql._scadaRawUnion()}) sc
+          JOIN dim.dim_calendar c ON c.date = sc.date
+          JOIN dim.dim_duid d ON sc.DUID = d.DUID`;
+      }
+
+      function priceFrom() {
+        if (grain === 'daily') {
+          return `(${sql._priceDailyUnion()}) p
+            JOIN dim.dim_calendar c ON c.date = p.date`;
+        }
+        return `(${sql._priceRawUnion()}) p
+          JOIN dim.dim_calendar c ON c.date = p.date`;
+      }
+
+      let inner;
+      if (dataset === 'scada') {
+        inner = `SELECT ${scadaCols('sc')} FROM ${scadaFrom()} WHERE ${sql.whereScada()} ${scadaGroupBy('sc')} ${scadaOrderBy('sc')}`;
+      } else if (dataset === 'price') {
+        inner = `SELECT ${priceCols('p')} FROM ${priceFrom()} WHERE ${sql.wherePrice()} ${priceGroupBy('p')} ${priceOrderBy('p')}`;
+      } else {
+        // Both: join scada + price
+        const timeJoin = grain === 'daily' ? '' : 'AND sc.time = p.time';
+        const scadaSrc = grain === 'daily' ? sql._scadaDailyUnion() : sql._scadaRawUnion();
+        const priceSrc = grain === 'daily' ? sql._priceDailyUnion() : sql._priceRawUnion();
+        const scFrom = `dim.dim_calendar c
+          JOIN (${scadaSrc}) sc ON c.date = sc.date
+          JOIN dim.dim_duid d ON sc.DUID = d.DUID
+          LEFT JOIN (${priceSrc}) p ON sc.date = p.date ${timeJoin} AND d.Region = p.REGIONID`;
+
+        if (grain === '5min') {
+          inner = `SELECT CAST(sc.date AS VARCHAR) AS date, lpad(CAST(sc.time AS VARCHAR), 4, '0') AS time,
+            sc.DUID, d.FuelSourceDescriptor AS fuel, d.Region AS region,
+            ROUND(sc.mw::DOUBLE, 2) AS mw, ROUND(p.price::DOUBLE, 2) AS price
+            FROM ${scFrom} WHERE ${sql.whereScada()} ORDER BY sc.date, sc.time, sc.DUID`;
+        } else if (grain === 'hourly') {
+          inner = `SELECT CAST(sc.date AS VARCHAR) AS date, lpad(CAST(CAST(floor(sc.time / 100) * 100 AS INTEGER) AS VARCHAR), 4, '0') AS hour,
+            sc.DUID, d.FuelSourceDescriptor AS fuel, d.Region AS region,
+            ROUND(SUM(sc.mw)::DOUBLE, 2) AS sum_mw, ROUND(AVG(p.price)::DOUBLE, 2) AS avg_price
+            FROM ${scFrom} WHERE ${sql.whereScada()}
+            GROUP BY sc.date, floor(sc.time / 100), sc.DUID, d.FuelSourceDescriptor, d.Region
+            ORDER BY sc.date, hour, sc.DUID`;
+        } else {
+          inner = `SELECT CAST(sc.date AS VARCHAR) AS date,
+            sc.DUID, d.FuelSourceDescriptor AS fuel, d.Region AS region,
+            ROUND(sc.mwh::DOUBLE, 2) AS mwh, ROUND(p.price::DOUBLE, 2) AS avg_price
+            FROM ${scFrom} WHERE ${sql.whereScada()} ORDER BY sc.date, sc.DUID`;
+        }
+      }
+
+      if (limit) return `SELECT * FROM (${inner}) LIMIT ${limit}`;
+      return inner;
+    }
+
+    // --- Analyze: ensure data loaded for grain ---
+    async function ensureDataForGrain(grain) {
+      if (grain === 'daily') {
+        if (!aggLoaded) await loadDailyAggDatabase();
+      } else {
+        await ensureAllPeriods();
+      }
+    }
+
+    // --- Analyze: preview ---
+    async function analyzePreview() {
+      const btn = document.getElementById('analyzePreview');
       btn.disabled = true;
       btn.textContent = 'Loading...';
+      const info = document.getElementById('analyzeInfo');
+      const table = document.getElementById('analyzeTable');
+      table.innerHTML = '';
+      info.textContent = '';
+
       try {
-        let csvSql;
-        if (rangeDays() <= 7) {
-          const { from, to } = getDateRange();
-          await ensurePeriodsForRange(from, to);
-          csvSql = sql.csvExportIntraday();
-        } else {
-          await ensureAllPeriods();
-          csvSql = sql.csvExport();
+        const dataset = document.getElementById('analyzeDataset').value;
+        const grain = document.getElementById('analyzeGrain').value;
+        await ensureDataForGrain(grain);
+
+        setStatus("Previewing...", "loading");
+        const previewSql = buildAnalyzeSQL(dataset, grain, 500);
+        const rows = await runQuery(previewSql);
+
+        if (!rows.length) {
+          info.textContent = 'No data found for the selected filters.';
+          setStatus(window._cutoffCached || "Connected", "connected");
+          return;
         }
+
+        const cols = Object.keys(rows[0]);
+        let html = '<thead><tr>' + cols.map(c => `<th>${c}</th>`).join('') + '</tr></thead><tbody>';
+        for (const row of rows) {
+          html += '<tr>' + cols.map(c => `<td>${row[c] ?? ''}</td>`).join('') + '</tr>';
+        }
+        html += '</tbody>';
+        table.innerHTML = html;
+
+        // Get total count
+        const countSql = `SELECT COUNT(*) AS cnt FROM (${buildAnalyzeSQL(dataset, grain, null)})`;
+        const countResult = await runQuery(countSql);
+        const total = countResult[0]?.cnt || rows.length;
+        info.textContent = rows.length < total
+          ? `Showing ${rows.length} of ${Number(total).toLocaleString()} rows`
+          : `${Number(total).toLocaleString()} rows`;
+
+        setStatus(window._cutoffCached || "Connected", "connected");
+      } catch (e) {
+        if (e.message && e.message.includes('Out of Memory')) {
+          info.textContent = 'Out of memory. Apply filters or reduce the date range.';
+        } else {
+          info.textContent = 'Error: ' + e.message;
+        }
+        setStatus("Query error", "error");
+        console.error('[Analyze]', e);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Preview';
+      }
+    }
+
+    // --- Analyze: download ---
+    async function analyzeDownload() {
+      const btn = document.getElementById('analyzeDownload');
+      btn.disabled = true;
+      btn.textContent = 'Loading...';
+
+      try {
+        const dataset = document.getElementById('analyzeDataset').value;
+        const grain = document.getElementById('analyzeGrain').value;
+        await ensureDataForGrain(grain);
+
         btn.textContent = 'Exporting...';
         setStatus("Exporting CSV...", "loading");
-        const limitedSql = `SELECT * FROM (${csvSql}) LIMIT 1000000`;
-        const rowCount = await downloadCSVDirect(limitedSql, 'energy_5min.csv');
+        const exportSql = `SELECT * FROM (${buildAnalyzeSQL(dataset, grain, null)}) LIMIT 1000000`;
+        const { from, to } = getDateRange();
+        const filename = `energy_${dataset}_${grain}_${from}_${to}.csv`;
+        const rowCount = await downloadCSVDirect(exportSql, filename);
         setStatus(`Exported ${rowCount.toLocaleString()} rows`, "connected");
         if (rowCount >= 1000000) {
           alert('Export capped at 1,000,000 rows. Apply filters or reduce the date range for complete data.');
@@ -1072,18 +1288,19 @@
       } catch (e) {
         if (e.message && e.message.includes('Out of Memory')) {
           setStatus("Export failed: out of memory", "error");
-          alert('Out of memory. Apply filters (region, fuel, DUID) or reduce the date range to export fewer rows.');
+          alert('Out of memory. Apply filters (region, fuel, DUID) or reduce the date range.');
         } else {
           setStatus("CSV export error: " + e.message, "error");
         }
-        console.error('[CSV]', e);
+        console.error('[Analyze CSV]', e);
       } finally {
         btn.disabled = false;
         btn.textContent = 'Download CSV';
       }
     }
 
-    document.getElementById('dl-all').addEventListener('click', downloadAllCSV);
+    document.getElementById('analyzePreview').addEventListener('click', analyzePreview);
+    document.getElementById('analyzeDownload').addEventListener('click', analyzeDownload);
 
     // --- Filter population ---
     async function populateFilters() {
@@ -1111,6 +1328,11 @@
     }
 
     // --- Filter change listeners ---
+    function clearAnalyzePreview() {
+      document.getElementById('analyzeTable').innerHTML = '';
+      document.getElementById('analyzeInfo').textContent = '';
+    }
+
     for (const id of ["dateFrom", "dateTo"]) {
       document.getElementById(id).addEventListener("change", () => {
         crossFilter.fuel = null;
@@ -1118,6 +1340,7 @@
         crossFilter.duids = [];
         updateDuidTrigger();
         clearQueryCache();
+        clearAnalyzePreview();
         renderAll();
       });
     }
@@ -1128,6 +1351,7 @@
         crossFilter.region = null;
         crossFilter.duids = [];
         updateDuidTrigger();
+        clearAnalyzePreview();
         renderAll();
       });
     }
