@@ -543,7 +543,7 @@
         const { from, to } = getDateRange();
         const needed = periodsForRange(from, to).filter(p => _attachedPeriods.has(p));
         const parts = needed.map(p => `SELECT DUID, date, time, mw FROM p${p}.scada WHERE date < CURRENT_DATE - INTERVAL 5 DAY`);
-        parts.push(`SELECT DUID, date, time, mw FROM today.scada_today`);
+        parts.push(`SELECT DUID, date, time, mw FROM today.scada_today WHERE date >= CURRENT_DATE - INTERVAL 5 DAY`);
         return parts.join('\n            UNION ALL\n            ');
       },
 
@@ -551,7 +551,7 @@
         const { from, to } = getDateRange();
         const needed = periodsForRange(from, to).filter(p => _attachedPeriods.has(p));
         const parts = needed.map(p => `SELECT REGIONID, date, time, price FROM p${p}.price WHERE date < CURRENT_DATE - INTERVAL 5 DAY`);
-        parts.push(`SELECT REGIONID, date, time, price FROM today.price_today`);
+        parts.push(`SELECT REGIONID, date, time, price FROM today.price_today WHERE date >= CURRENT_DATE - INTERVAL 5 DAY`);
         return parts.join('\n            UNION ALL\n            ');
       },
 
