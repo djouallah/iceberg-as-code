@@ -410,18 +410,23 @@
     }
 
     async function downloadCSVDirect(sqlStr, filename) {
-      const csvPath = `/${filename}`;
-      const result = await conn.query(`COPY (${sqlStr}) TO '${csvPath}' (FORMAT CSV, HEADER)`);
-      const rowCount = Number(result.getChild('Count').get(0));
-      const buf = await _db.copyFileToBuffer(csvPath);
-      await _db.dropFile(csvPath);
-      const blob = new Blob([buf], { type: 'text/csv' });
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = filename;
-      a.click();
-      URL.revokeObjectURL(a.href);
-      return rowCount;
+      const exportConn = await _db.connect();
+      try {
+        const csvPath = `/${filename}`;
+        const result = await exportConn.query(`COPY (${sqlStr}) TO '${csvPath}' (FORMAT CSV, HEADER)`);
+        const rowCount = Number(result.getChild('Count').get(0));
+        const buf = await _db.copyFileToBuffer(csvPath);
+        await _db.dropFile(csvPath);
+        const blob = new Blob([buf], { type: 'text/csv' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = filename;
+        a.click();
+        URL.revokeObjectURL(a.href);
+        return rowCount;
+      } finally {
+        await exportConn.close();
+      }
     }
 
     // =========================================================================
@@ -940,10 +945,10 @@
         }
         btn.textContent = 'Exporting...';
         setStatus("Exporting CSV (max 1M rows)...", "loading");
-        const limitedSql = `SELECT * FROM (${csvSql}) LIMIT 1048576`;
+        const limitedSql = `SELECT * FROM (${csvSql}) LIMIT 1000000`;
         const rowCount = await downloadCSVDirect(limitedSql, 'energy_5min.csv');
         setStatus(`Exported ${rowCount.toLocaleString()} rows`, "connected");
-        if (rowCount >= 1048576) {
+        if (rowCount >= 1000000) {
           alert('Export capped at 1,048,576 rows (Excel limit). Apply filters or reduce the date range for complete data.');
         }
       } catch (e) {
