@@ -82,21 +82,12 @@
       </div>
     </div>
     <div class="filter-group">
-      <label>Period</label>
-      <select id="daysFilter">
-        <option value="1">Today</option>
-        <option value="3" selected>Last 3 days</option>
-        <option value="7">Last 7 days</option>
-        <option value="14">Last 14 days</option>
-        <option value="30">Last 30 days</option>
-        <option value="60">Last 60 days</option>
-        <option value="90">Last 90 days</option>
-        <option value="180">Last 6 months</option>
-        <option value="365">Last 1 year</option>
-        <option value="730">Last 2 years</option>
-        <option value="1825">Last 5 years</option>
-        <option value="9999">All</option>
-      </select>
+      <label>From</label>
+      <input type="date" id="dateFrom" style="padding:0.35rem 0.4rem;border:1px solid #30363d;border-radius:6px;font-size:0.8rem;background:#0d1117;color:#e1e4e8;cursor:pointer;outline:none;">
+    </div>
+    <div class="filter-group">
+      <label>To</label>
+      <input type="date" id="dateTo" style="padding:0.35rem 0.4rem;border:1px solid #30363d;border-radius:6px;font-size:0.8rem;background:#0d1117;color:#e1e4e8;cursor:pointer;outline:none;">
     </div>
     <button class="btn-csv-main" id="dl-all" type="button">Download CSV</button>
     <a href="https://github.com/djouallah/analytics-as-code" target="_blank" style="color:#8b949e;text-decoration:none;display:inline-flex;align-items:center;gap:3px;" title="View on GitHub"><svg height="16" width="16" viewBox="0 0 16 16" fill="#8b949e"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 2-.27c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg></a>
@@ -367,8 +358,15 @@
     // =========================================================================
 
     // Grain: <=7d = 5-min intraday | >7d = daily aggregate
+    function getDateRange() {
+      return { from: document.getElementById("dateFrom").value, to: document.getElementById("dateTo").value };
+    }
+    function rangeDays() {
+      const { from, to } = getDateRange();
+      return Math.round((new Date(to) - new Date(from)) / 86400000);
+    }
     function isIntradayMode() {
-      return parseInt(document.getElementById("daysFilter").value) <= 7;
+      return rangeDays() <= 7;
     }
 
     function padTime(time) { return String(time).padStart(4, '0'); }
@@ -500,9 +498,8 @@
       whereScada() {
         const region = document.getElementById("regionFilter").value || crossFilter.region;
         const fuel = document.getElementById("fuelFilter").value || crossFilter.fuel;
-        const days = document.getElementById("daysFilter").value;
-        const dateFilter = days === '1' ? `c.date >= CURRENT_DATE` : `c.date >= CURRENT_DATE - INTERVAL ${days} DAY`;
-        const clauses = [dateFilter];
+        const { from, to } = getDateRange();
+        const clauses = [`c.date >= '${from}' AND c.date <= '${to}'`];
         if (region) clauses.push(`d.Region = '${region}'`);
         if (fuel) clauses.push(`d.FuelSourceDescriptor = '${fuel}'`);
         if (crossFilter.duids.length) clauses.push(`sc.DUID IN (${crossFilter.duids.map(d => `'${d}'`).join(',')})`);
@@ -511,9 +508,8 @@
 
       wherePrice() {
         const region = document.getElementById("regionFilter").value || crossFilter.region;
-        const days = document.getElementById("daysFilter").value;
-        const dateFilter = days === '1' ? `c.date >= CURRENT_DATE` : `c.date >= CURRENT_DATE - INTERVAL ${days} DAY`;
-        const clauses = [dateFilter];
+        const { from, to } = getDateRange();
+        const clauses = [`c.date >= '${from}' AND c.date <= '${to}'`];
         if (region) clauses.push(`p.REGIONID = '${region}'`);
         if (!region && (crossFilter.duids.length || crossFilter.fuel)) {
           const fuel = document.getElementById("fuelFilter").value || crossFilter.fuel;
@@ -927,9 +923,8 @@
 
     // --- CSV download ---
     async function downloadAllCSV() {
-      const days = parseInt(document.getElementById("daysFilter").value);
       let csvSql;
-      if (days <= 7) {
+      if (rangeDays() <= 7) {
         csvSql = sql.csvExportIntraday();
       } else {
         try {
@@ -962,10 +957,35 @@
       const fuelSelect = document.getElementById("fuelFilter");
       for (const f of fuels) fuelSelect.add(new Option(f.fuel, f.fuel));
       allDuids = await runQuery(sql.allDuids);
+
+      // Set date range defaults: last 3 days up to max date in data
+      const maxDateResult = await runQuery("SELECT CAST(MAX(date) AS VARCHAR) AS d FROM today.scada_today");
+      const minDateResult = await runQuery("SELECT CAST(MIN(date) AS VARCHAR) AS d FROM dim.dim_calendar");
+      const maxDate = maxDateResult[0].d;
+      const minDate = minDateResult[0].d;
+      const fromDate = new Date(maxDate);
+      fromDate.setDate(fromDate.getDate() - 3);
+      document.getElementById("dateTo").value = maxDate;
+      document.getElementById("dateTo").min = minDate;
+      document.getElementById("dateTo").max = maxDate;
+      document.getElementById("dateFrom").value = fromDate.toISOString().split('T')[0];
+      document.getElementById("dateFrom").min = minDate;
+      document.getElementById("dateFrom").max = maxDate;
     }
 
     // --- Filter change listeners ---
-    for (const id of ["regionFilter", "fuelFilter", "daysFilter"]) {
+    for (const id of ["dateFrom", "dateTo"]) {
+      document.getElementById(id).addEventListener("change", () => {
+        crossFilter.fuel = null;
+        crossFilter.region = null;
+        crossFilter.duids = [];
+        updateDuidTrigger();
+        clearQueryCache();
+        renderAll();
+      });
+    }
+
+    for (const id of ["regionFilter", "fuelFilter"]) {
       document.getElementById(id).addEventListener("change", () => {
         crossFilter.fuel = null;
         crossFilter.region = null;
