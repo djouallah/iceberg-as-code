@@ -300,6 +300,7 @@
 
       const sourceLabel = { 'opfs-hit': 'cached', 'opfs-miss': 'downloaded', 'opfs-refresh': 'refreshed' };
       console.log(`[OPFS] dim: ${sourceLabel[dimResult.source]}, today: ${sourceLabel[todayResult.source]}`);
+      console.log(`[DuckDB] crossOriginIsolated: ${window.crossOriginIsolated} (${window.crossOriginIsolated ? 'multi-threaded' : 'single-threaded'})`);
       setStatus("Connected", "connected");
     }
 
@@ -942,8 +943,8 @@
       }
       const countResult = await runQuery(`SELECT COUNT(*) AS n FROM (${csvSql})`);
       const rowCount = countResult[0].n;
-      if (rowCount > 150000) {
-        alert(`Too many rows (${rowCount.toLocaleString()}). Apply filters or reduce the date range to under 150K rows.`);
+      if (rowCount > 1048576) {
+        alert(`Too many rows (${rowCount.toLocaleString()}). Excel limit is 1,048,576. Apply filters or reduce the date range.`);
         return;
       }
       const data = await runQuery(csvSql);
