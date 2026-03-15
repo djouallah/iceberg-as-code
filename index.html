@@ -938,9 +938,16 @@
           await ensureYearDbsLoaded();
           csvSql = sql.csvExport();
         }
-        btn.textContent = 'Exporting...';
+        btn.textContent = 'Counting rows...';
+        const countResult = await conn.query(`SELECT COUNT(*)::INTEGER AS n FROM (${csvSql})`);
+        const rowCount = Number(countResult.getChild('n').get(0));
+        if (rowCount > 1048576) {
+          alert(`Too many rows (${rowCount.toLocaleString()}). Excel limit is 1,048,576. Apply filters or reduce the date range.`);
+          return;
+        }
+        btn.textContent = `Exporting ${rowCount.toLocaleString()} rows...`;
         setStatus("Exporting CSV...", "loading");
-        const rowCount = await downloadCSVDirect(csvSql, 'energy_5min.csv');
+        await downloadCSVDirect(csvSql, 'energy_5min.csv');
         setStatus(`Exported ${rowCount.toLocaleString()} rows`, "connected");
       } catch (e) {
         setStatus("CSV export error: " + e.message, "error");
