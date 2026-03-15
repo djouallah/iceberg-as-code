@@ -302,28 +302,39 @@
       setStatus("Connected", "connected");
     }
 
-    async function loadYearDatabases() {
-      const manifest = await (await fetch(`${_baseUrl}/data/daily_manifest.json`)).json();
-      loadedPeriods = manifest.periods;
-      console.log(`[OPFS] Loading databases: ${loadedPeriods.join(', ')}...`);
-
+    async function loadDailyAggDatabase() {
       const sourceLabel = { 'opfs-hit': 'cached', 'opfs-miss': 'downloaded', 'opfs-refresh': 'refreshed' };
-      const results = await Promise.all(
-        loadedPeriods.map(p => cacheInOPFS(_db, `${_baseUrl}/data/energy_data_${p}.duckdb`, `energy_data_${p}.duckdb`))
-      );
-      for (const p of loadedPeriods) {
-        await conn.query(`ATTACH 'energy_data_${p}.duckdb' AS p${p} (READ_ONLY);`);
-      }
-      for (let i = 0; i < loadedPeriods.length; i++) {
-        console.log(`[OPFS] p${loadedPeriods[i]}: ${sourceLabel[results[i].source]}`);
-      }
-      console.log(`[OPFS] All databases loaded`);
-
-      // Load daily aggregate database
       const aggResult = await cacheInOPFS(_db, `${_baseUrl}/data/energy_daily_agg.duckdb`, 'energy_daily_agg.duckdb');
       await conn.query("ATTACH 'energy_daily_agg.duckdb' AS agg (READ_ONLY);");
       aggLoaded = true;
       console.log(`[OPFS] agg: ${sourceLabel[aggResult.source]}`);
+    }
+
+    let _yearDbsLoaded = false;
+    async function ensureYearDbsLoaded() {
+      if (_yearDbsLoaded) return;
+      const manifest = await (await fetch(`${_baseUrl}/data/daily_manifest.json`)).json();
+      loadedPeriods = manifest.periods;
+      setStatus("Downloading detailed data for export...", "loading");
+      const sourceLabel = { 'opfs-hit': 'cached', 'opfs-miss': 'downloaded', 'opfs-refresh': 'refreshed' };
+      const results = await Promise.all(
+        loadedPeriods.map(p => cacheInOPFS(_db, `${_baseUrl}/data/energy_data_${p}.duckdb`, `energy_data_${p}.duckdb`))
+      );
+      const attached = new Set();
+      try {
+        const existing = await conn.query("SELECT database_name FROM duckdb_databases()");
+        for (let i = 0; i < Number(existing.numRows); i++) attached.add(existing.getChild('database_name').get(i));
+      } catch (e) { /* ignore */ }
+      for (const p of loadedPeriods) {
+        if (!attached.has(`p${p}`)) {
+          await conn.query(`ATTACH 'energy_data_${p}.duckdb' AS p${p} (READ_ONLY);`);
+        }
+      }
+      for (let i = 0; i < loadedPeriods.length; i++) {
+        console.log(`[OPFS] p${loadedPeriods[i]}: ${sourceLabel[results[i].source]}`);
+      }
+      _yearDbsLoaded = true;
+      setStatus(window._cutoffCached || "Connected", "connected");
     }
 
     const _queryCache = new Map();
@@ -353,15 +364,9 @@
     // 4. HELPERS
     // =========================================================================
 
-    // Grain: <=7d = 5-min intraday | 8-30d = hourly | >30d = daily aggregate
+    // Grain: <=7d = 5-min intraday | >7d = daily aggregate
     function isIntradayMode() {
       return parseInt(document.getElementById("daysFilter").value) <= 7;
-    }
-    function showTimeDetail() {
-      return parseInt(document.getElementById("daysFilter").value) <= 30;
-    }
-    function useWeeklyAgg() {
-      return parseInt(document.getElementById("daysFilter").value) > 365;
     }
 
     function padTime(time) { return String(time).padStart(4, '0'); }
@@ -436,30 +441,7 @@
         return parts.join('\n            UNION ALL\n            ');
       },
 
-      // Hourly aggregated (for charts when >7d)
-      _scadaHourlyUnion() {
-        const extract = "extract('hour' FROM make_time((time // 100)::BIGINT, (time % 100)::BIGINT, 0.0))";
-        const parts = loadedPeriods.map(p =>
-          `SELECT DUID, date, CAST(${extract} * 100 AS SMALLINT) AS time, CAST(SUM(mw) / 12.0 AS REAL) AS mwh, CAST(COUNT(*) AS INTEGER) AS cnt FROM p${p}.scada WHERE date < CURRENT_DATE - INTERVAL 5 DAY GROUP BY DUID, date, ${extract}`
-        );
-        parts.push(
-          `SELECT DUID, date, CAST(${extract} * 100 AS SMALLINT) AS time, CAST(SUM(mw) / 12.0 AS REAL) AS mwh, CAST(COUNT(*) AS INTEGER) AS cnt FROM today.scada_today WHERE date >= CURRENT_DATE - INTERVAL 5 DAY GROUP BY DUID, date, ${extract}`
-        );
-        return parts.join('\n            UNION ALL\n            ');
-      },
-
-      _priceHourlyUnion() {
-        const extract = "extract('hour' FROM make_time((time // 100)::BIGINT, (time % 100)::BIGINT, 0.0))";
-        const parts = loadedPeriods.map(p =>
-          `SELECT REGIONID, date, CAST(${extract} * 100 AS SMALLINT) AS time, AVG(price)::REAL AS price FROM p${p}.price WHERE date < CURRENT_DATE - INTERVAL 5 DAY GROUP BY REGIONID, date, ${extract}`
-        );
-        parts.push(
-          `SELECT REGIONID, date, CAST(${extract} * 100 AS SMALLINT) AS time, AVG(price)::REAL AS price FROM today.price_today WHERE date >= CURRENT_DATE - INTERVAL 5 DAY GROUP BY REGIONID, date, ${extract}`
-        );
-        return parts.join('\n            UNION ALL\n            ');
-      },
-
-      // Daily pre-aggregated (for charts when >30d)
+      // Daily pre-aggregated (for charts when >7d)
       _scadaDailyUnion() {
         const parts = [
           `SELECT DUID, date, mwh FROM agg.scada_daily WHERE date < CURRENT_DATE - INTERVAL 5 DAY`
@@ -482,16 +464,15 @@
 
       // --- FROM clauses ---
       // Intraday (<=7d): 5-min grain from today DB
-      // Hourly (8-30d): year DBs + today aggregated to hourly via UNION ALL
-      // Daily (>30d): pre-aggregated daily + today aggregated to daily
+      // Daily (>7d): pre-aggregated daily + today aggregated to daily
       fromScada() {
         if (isIntradayMode()) {
           return `today.scada_today sc
             JOIN dim.dim_calendar c ON c.date = sc.date
             JOIN dim.dim_duid d ON sc.DUID = d.DUID`;
         }
-        if (showTimeDetail() || !aggLoaded) {
-          return `(${sql._scadaHourlyUnion()}) sc
+        if (!aggLoaded) {
+          return `(SELECT DUID, date, CAST(SUM(mw) / 12.0 AS REAL) AS mwh FROM today.scada_today GROUP BY DUID, date) sc
             JOIN dim.dim_calendar c ON c.date = sc.date
             JOIN dim.dim_duid d ON sc.DUID = d.DUID`;
         }
@@ -505,8 +486,8 @@
           return `today.price_today p
             JOIN dim.dim_calendar c ON c.date = p.date`;
         }
-        if (showTimeDetail() || !aggLoaded) {
-          return `(${sql._priceHourlyUnion()}) p
+        if (!aggLoaded) {
+          return `(SELECT REGIONID, date, CAST(AVG(price) AS REAL) AS price FROM today.price_today GROUP BY REGIONID, date) p
             JOIN dim.dim_calendar c ON c.date = p.date`;
         }
         return `(${sql._priceDailyUnion()}) p
@@ -551,26 +532,17 @@
       allDuids: "SELECT DUID, Region, FuelSourceDescriptor AS fuel FROM dim.dim_duid WHERE DUID IS NOT NULL ORDER BY DUID",
 
       // --- Generation chart ---
-      generation(seriesAlias, seriesCol, valCol, timeDetail, intraday, weekly) {
-        const cntCol = intraday ? 'COUNT(*)' : (timeDetail ? 'SUM(sc.cnt)' : 'COUNT(*)');
-        if (timeDetail) {
+      generation(seriesAlias, seriesCol, valCol, intraday) {
+        if (intraday) {
           return `
-            SELECT CAST(sc.date AS VARCHAR) AS date, CAST(sc.time AS INTEGER) AS time, ${seriesAlias}, SUM(${valCol})::DOUBLE AS total_mw, CAST(${cntCol} AS INTEGER) AS row_cnt
+            SELECT CAST(sc.date AS VARCHAR) AS date, CAST(sc.time AS INTEGER) AS time, ${seriesAlias}, SUM(${valCol})::DOUBLE AS total_mw, CAST(COUNT(*) AS INTEGER) AS row_cnt
             FROM ${sql.fromScada()}
             WHERE ${sql.whereScada()}
             GROUP BY sc.date, sc.time, ${seriesCol}
             ORDER BY sc.date, sc.time`;
         }
-        if (weekly) {
-          return `
-            SELECT CAST(date_trunc('week', sc.date) AS VARCHAR) AS date, ${seriesAlias}, SUM(${valCol})::DOUBLE AS total_mw, CAST(${cntCol} AS INTEGER) AS row_cnt
-            FROM ${sql.fromScada()}
-            WHERE ${sql.whereScada()}
-            GROUP BY date_trunc('week', sc.date), ${seriesCol}
-            ORDER BY date`;
-        }
         return `
-          SELECT CAST(sc.date AS VARCHAR) AS date, ${seriesAlias}, SUM(${valCol})::DOUBLE AS total_mw, CAST(${cntCol} AS INTEGER) AS row_cnt
+          SELECT CAST(sc.date AS VARCHAR) AS date, ${seriesAlias}, SUM(${valCol})::DOUBLE AS total_mw, CAST(COUNT(*) AS INTEGER) AS row_cnt
           FROM ${sql.fromScada()}
           WHERE ${sql.whereScada()}
           GROUP BY sc.date, ${seriesCol}
@@ -578,22 +550,14 @@
       },
 
       // --- Price chart ---
-      price(timeDetail, weekly) {
-        if (timeDetail) {
+      price(intraday) {
+        if (intraday) {
           return `
             SELECT CAST(p.date AS VARCHAR) AS date, CAST(p.time AS INTEGER) AS time, p.REGIONID AS Region, AVG(p.price)::DOUBLE AS avg_price
             FROM ${sql.fromPrice()}
             WHERE ${sql.wherePrice()}
             GROUP BY p.date, p.time, p.REGIONID
             ORDER BY p.date, p.time`;
-        }
-        if (weekly) {
-          return `
-            SELECT CAST(date_trunc('week', p.date) AS VARCHAR) AS date, p.REGIONID AS Region, AVG(p.price)::DOUBLE AS avg_price
-            FROM ${sql.fromPrice()}
-            WHERE ${sql.wherePrice()}
-            GROUP BY date_trunc('week', p.date), p.REGIONID
-            ORDER BY date`;
         }
         return `
           SELECT CAST(p.date AS VARCHAR) AS date, p.REGIONID AS Region, AVG(p.price)::DOUBLE AS avg_price
@@ -622,13 +586,13 @@
       },
 
       // --- CSV export (always raw 5-min grain) ---
-      csvExport() {
+      _csvExportFrom(scadaSrc, priceSrc) {
         const hasDuids = crossFilter.duids.length > 0 || !!document.getElementById("fuelFilter").value || !!document.getElementById("regionFilter").value;
 
         const scadaFrom = `dim.dim_calendar c
-          JOIN (${sql._scadaRawUnion()}) sc ON c.date = sc.date
+          JOIN (${scadaSrc}) sc ON c.date = sc.date
           JOIN dim.dim_duid d ON sc.DUID = d.DUID`;
-        const priceJoin = `LEFT JOIN (${sql._priceRawUnion()}) p ON sc.date = p.date AND sc.time = p.time AND d.Region = p.REGIONID`;
+        const priceJoin = `LEFT JOIN (${priceSrc}) p ON sc.date = p.date AND sc.time = p.time AND d.Region = p.REGIONID`;
 
         if (hasDuids) {
           return `
@@ -651,6 +615,16 @@
           ORDER BY sc.date, sc.time, d.FuelSourceDescriptor`;
       },
 
+      csvExport() {
+        return sql._csvExportFrom(sql._scadaRawUnion(), sql._priceRawUnion());
+      },
+
+      csvExportIntraday() {
+        const scadaSrc = `SELECT DUID, date, time, mw FROM today.scada_today`;
+        const priceSrc = `SELECT REGIONID, date, time, price FROM today.price_today`;
+        return sql._csvExportFrom(scadaSrc, priceSrc);
+      },
+
       // --- Cutoff timestamp ---
       cutoff: "SELECT CAST(MAX(date) AS VARCHAR) || ' ' || substr(lpad(CAST(MAX(time) AS VARCHAR), 4, '0'), 1, 2) || ':' || substr(lpad(CAST(MAX(time) AS VARCHAR), 4, '0'), 3, 2) AS last_update FROM today.scada_today WHERE date = (SELECT MAX(date) FROM today.scada_today)",
     };
@@ -669,7 +643,6 @@
     // --- Generation by Fuel Type (stacked area) ---
     async function renderGeneration(seq) {
       const intraday = isIntradayMode();
-      const timeDetail = showTimeDetail();
       const unit = intraday ? 'MW' : 'MWh';
       const drillFuel = crossFilter.fuel;
 
@@ -681,13 +654,12 @@
       const seriesCol = drillFuel ? 'sc.DUID' : 'd.FuelSourceDescriptor';
       const seriesAlias = drillFuel ? 'sc.DUID AS series' : 'd.FuelSourceDescriptor AS series';
 
-      const weekly = useWeeklyAgg();
-      const data = await runQuery(sql.generation(seriesAlias, seriesCol, valCol, timeDetail, intraday, weekly));
+      const data = await runQuery(sql.generation(seriesAlias, seriesCol, valCol, intraday));
       if (seq !== _renderSeq || !data.length) return;
 
-      const { xKeys, xLabels } = buildTimeAxis(data, timeDetail);
+      const { xKeys, xLabels } = buildTimeAxis(data, intraday);
       const lookup = buildLookup(data,
-        row => timeDetail ? `${row.date}|${padTime(row.time)}|${row.series}` : `${row.date}|${row.series}`,
+        row => intraday ? `${row.date}|${padTime(row.time)}|${row.series}` : `${row.date}|${row.series}`,
         row => row.total_mw
       );
 
@@ -725,9 +697,9 @@
         }},
         legend: { type: 'scroll', top: 0, icon: 'none', itemGap: 12, selectedMode: false, data: seriesNames.map((name, i) => ({ name, textStyle: { color: drillFuel ? PALETTE[i % PALETTE.length] : fuelColor(name), fontSize: 11 } })) },
         grid: { left: 60, right: 20, top: 35, bottom: 25 },
-        xAxis: { type: 'category', data: xLabels, boundaryGap: false, axisLabel: { rotate: timeDetail ? 45 : 0, fontSize: timeDetail ? 10 : 12 } },
+        xAxis: { type: 'category', data: xLabels, boundaryGap: false, axisLabel: { rotate: intraday ? 45 : 0, fontSize: intraday ? 10 : 12 } },
         yAxis: { type: 'value', min: 0, name: unit, nameTextStyle: { color: '#8b949e', fontSize: 11 }, axisLabel: { formatter: v => v >= 1000 ? (v/1000).toFixed(0) + 'k' : v } },
-        dataZoom: dataZoomConfig(timeDetail),
+        dataZoom: dataZoomConfig(intraday),
         series,
         animationDuration: 600,
         animationEasing: 'cubicOut',
@@ -750,15 +722,15 @@
       });
 
       // KPIs
-      const uniqueIntervals = timeDetail ? xKeys.length : [...new Set(data.map(d => d.date))].length;
+      const uniqueIntervals = intraday ? xKeys.length : [...new Set(data.map(d => d.date))].length;
       const totalGen = data.reduce((s, d) => s + d.total_mw, 0) / (uniqueIntervals || 1);
       document.getElementById('kpiGen').textContent = Math.round(totalGen).toLocaleString();
-      document.getElementById('kpiGenSub').textContent = intraday ? 'Average MW' : (timeDetail ? 'Average MWh' : 'Average MWh/day');
+      document.getElementById('kpiGenSub').textContent = intraday ? 'Average MW' : 'Average MWh/day';
 
       const topFuel = Object.entries(seriesTotals).sort((a, b) => b[1] - a[1])[0];
       if (topFuel) {
         document.getElementById('kpiTopFuel').textContent = topFuel[0];
-        const avgLabel = intraday ? 'MW avg' : (timeDetail ? 'MWh avg' : 'MWh/day avg');
+        const avgLabel = intraday ? 'MW avg' : 'MWh/day avg';
         document.getElementById('kpiTopFuelSub').textContent = `${Math.round(topFuel[1] / (uniqueIntervals || 1)).toLocaleString()} ${avgLabel}`;
       }
 
@@ -770,15 +742,14 @@
 
     // --- Average Price by Region (line) ---
     async function renderPrice(seq) {
-      const timeDetail = showTimeDetail();
+      const intraday = isIntradayMode();
 
-      const weekly = useWeeklyAgg();
-      const data = await runQuery(sql.price(timeDetail, weekly));
+      const data = await runQuery(sql.price(intraday));
       if (seq !== _renderSeq || !data.length) return;
 
-      const { xKeys, xLabels } = buildTimeAxis(data, timeDetail);
+      const { xKeys, xLabels } = buildTimeAxis(data, intraday);
       const lookup = buildLookup(data,
-        row => timeDetail ? `${row.date}|${padTime(row.time)}|${row.Region}` : `${row.date}|${row.Region}`,
+        row => intraday ? `${row.date}|${padTime(row.time)}|${row.Region}` : `${row.date}|${row.Region}`,
         row => row.avg_price
       );
 
@@ -803,10 +774,10 @@
         color: PALETTE,
         tooltip: { trigger: 'axis', axisPointer: { type: 'line' } },
         legend: { bottom: 0, textStyle: { fontSize: 11 } },
-        grid: { left: 55, right: 15, top: 15, bottom: timeDetail ? 55 : 40 },
-        xAxis: { type: 'category', data: xLabels, boundaryGap: false, axisLabel: { rotate: timeDetail ? 45 : 0, fontSize: timeDetail ? 10 : 12 } },
+        grid: { left: 55, right: 15, top: 15, bottom: intraday ? 55 : 40 },
+        xAxis: { type: 'category', data: xLabels, boundaryGap: false, axisLabel: { rotate: intraday ? 45 : 0, fontSize: intraday ? 10 : 12 } },
         yAxis: { type: 'value', name: '$/MWh', nameTextStyle: { color: '#8b949e', fontSize: 11 }, axisLabel: { formatter: v => '$' + v } },
-        dataZoom: dataZoomConfig(timeDetail),
+        dataZoom: dataZoomConfig(intraday),
         series,
         animationDuration: 600,
       }, true);
@@ -954,7 +925,20 @@
 
     // --- CSV download ---
     async function downloadAllCSV() {
-      const csvSql = sql.csvExport();
+      const days = parseInt(document.getElementById("daysFilter").value);
+      let csvSql;
+      if (days <= 7) {
+        csvSql = sql.csvExportIntraday();
+      } else {
+        try {
+          await ensureYearDbsLoaded();
+        } catch (e) {
+          alert('Failed to download detailed data for CSV export. Please try again.');
+          console.error('[CSV] Year DB load failed:', e);
+          return;
+        }
+        csvSql = sql.csvExport();
+      }
       const countResult = await runQuery(`SELECT COUNT(*) AS n FROM (${csvSql})`);
       const rowCount = countResult[0].n;
       if (rowCount > 150000) {
@@ -1022,7 +1006,7 @@
       await populateFilters();
       await renderAll();
       // Load year databases in background, then silently refresh
-      loadYearDatabases().then(() => { clearQueryCache(); renderAll(); }).catch(e => console.warn('[OPFS] Year load failed:', e));
+      loadDailyAggDatabase().then(() => { clearQueryCache(); renderAll(); }).catch(e => console.warn('[OPFS] Agg load failed:', e));
     } catch (e) {
       setStatus("Error: " + e.message, "error");
       console.error(e);
