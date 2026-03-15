@@ -1016,22 +1016,19 @@
     async function downloadAllCSV() {
       const btn = document.getElementById('dl-all');
       btn.disabled = true;
-      btn.textContent = 'Preparing...';
+      btn.textContent = 'Loading...';
       try {
         let csvSql;
         if (rangeDays() <= 7) {
           const { from, to } = getDateRange();
-          btn.textContent = 'Downloading data...';
           await ensurePeriodsForRange(from, to);
           csvSql = sql.csvExportIntraday();
         } else {
-          btn.textContent = 'Downloading data...';
-          setStatus("Downloading detailed data for export...", "loading");
           await ensureAllPeriods();
           csvSql = sql.csvExport();
         }
         btn.textContent = 'Exporting...';
-        setStatus("Exporting CSV (max 1M rows)...", "loading");
+        setStatus("Exporting CSV...", "loading");
         const limitedSql = `SELECT * FROM (${csvSql}) LIMIT 1000000`;
         const rowCount = await downloadCSVDirect(limitedSql, 'energy_5min.csv');
         setStatus(`Exported ${rowCount.toLocaleString()} rows`, "connected");
