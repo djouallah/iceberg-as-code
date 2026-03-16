@@ -53,3 +53,11 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./deploy
           keep_files: true
+      - name: Deploy to nemtracker
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          personal_token: ${{ secrets.NEMTRACKER_TOKEN }}
+          external_repository: djouallah/nemtracker
+          publish_dir: ./deploy
+          keep_files: true

@@ -86,6 +86,13 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./deploy_data
           keep_files: true
+      - name: Deploy to nemtracker (today + dims)
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          personal_token: ${{ secrets.NEMTRACKER_TOKEN }}
+          external_repository: djouallah/nemtracker
+          publish_dir: ./deploy_data
+          keep_files: true
 
       # --- Phase 2: Daily full refresh (slow) ---
       - name: Test data
@@ -120,5 +127,13 @@ jobs:
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./deploy_daily
+          keep_files: true
+      - name: Deploy to nemtracker (daily)
+        if: steps.mode.outputs.is_daily == 'true'
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          personal_token: ${{ secrets.NEMTRACKER_TOKEN }}
+          external_repository: djouallah/nemtracker
           publish_dir: ./deploy_daily
           keep_files: true
