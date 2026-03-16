@@ -80,12 +80,6 @@ jobs:
           if [ "${{ steps.mode.outputs.is_daily }}" = "true" ]; then
             cp dashboard/energy_dim.duckdb deploy_data/data/
           fi
-      - name: Deploy to GitHub Pages (today + dims)
-        uses: peaceiris/actions-gh-pages@v4
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./deploy_data
-          keep_files: true
       - name: Deploy to nemtracker (today + dims)
         uses: peaceiris/actions-gh-pages@v4
         with:
@@ -123,13 +117,6 @@ jobs:
           cp dashboard/energy_data_*.duckdb deploy_daily/data/
           cp dashboard/energy_daily_agg.duckdb deploy_daily/data/
           cp dashboard/daily_manifest.json deploy_daily/data/
-      - name: Deploy to GitHub Pages (daily)
-        if: steps.mode.outputs.is_daily == 'true'
-        uses: peaceiris/actions-gh-pages@v4
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./deploy_daily
-          keep_files: true
       - name: Deploy to nemtracker (daily)
         if: steps.mode.outputs.is_daily == 'true'
         uses: peaceiris/actions-gh-pages@v4
