@@ -77,7 +77,7 @@ def export_scada_today():
                 CAST(strftime(SETTLEMENTDATE, '%H%M') AS SMALLINT) AS time,
                 CAST(ANY_VALUE(INITIALMW) AS REAL) AS mw
             FROM catalog.landing.fct_scada_today
-            WHERE CAST(SETTLEMENTDATE AS DATE) >= CURRENT_DATE - INTERVAL 7 DAY
+            WHERE CAST(SETTLEMENTDATE AS DATE) >= CURRENT_DATE - INTERVAL 14 DAY
                 AND INITIALMW <> 0
             GROUP BY DUID, CAST(SETTLEMENTDATE AS DATE), strftime(SETTLEMENTDATE, '%H%M')
         ) TO '{DASHBOARD_DIR}/fct_scada_today.parquet' (FORMAT PARQUET);
@@ -93,7 +93,7 @@ def export_price_today():
                 CAST(strftime(SETTLEMENTDATE, '%H%M') AS SMALLINT) AS time,
                 CAST(ANY_VALUE(RRP) AS REAL) AS price
             FROM catalog.landing.fct_price_today
-            WHERE CAST(SETTLEMENTDATE AS DATE) >= CURRENT_DATE - INTERVAL 7 DAY
+            WHERE CAST(SETTLEMENTDATE AS DATE) >= CURRENT_DATE - INTERVAL 14 DAY
                 AND INTERVENTION = 0
             GROUP BY REGIONID, CAST(SETTLEMENTDATE AS DATE), strftime(SETTLEMENTDATE, '%H%M')
         ) TO '{DASHBOARD_DIR}/fct_price_today.parquet' (FORMAT PARQUET);
