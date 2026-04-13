@@ -2,10 +2,11 @@
 -- Returns rows where a downloaded file is missing from fct_scada
 
 SELECT
-  csv_filename
-FROM {{ ref('stg_csv_archive_log') }}
-WHERE source_type = 'daily'
-  AND csv_filename NOT IN (
-    SELECT DISTINCT file
-    FROM {{ ref('fct_scada') }}
+  log.csv_filename
+FROM {{ ref('stg_csv_archive_log') }} log
+WHERE log.source_type = 'daily'
+  AND NOT EXISTS (
+    SELECT 1
+    FROM {{ ref('fct_scada') }} s
+    WHERE s.file = log.csv_filename
   )
