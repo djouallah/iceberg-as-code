@@ -17,7 +17,7 @@ permissions:
 jobs:
   import:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 90
     if: >-
       github.event_name == 'schedule' ||
       github.event_name == 'workflow_dispatch' ||
