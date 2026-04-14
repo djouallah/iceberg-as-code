@@ -23,7 +23,7 @@ jobs:
       ICEBERG_REST_ENDPOINT: ${{ secrets.ICEBERG_REST_ENDPOINT }}
       ICEBERG_TOKEN: ${{ secrets.ICEBERG_TOKEN }}
       ICEBERG_WAREHOUSE: ${{ secrets.ICEBERG_WAREHOUSE }}
-      download_limit: "150"
+      download_limit: "2"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
