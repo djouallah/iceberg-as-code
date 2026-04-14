@@ -4,7 +4,7 @@
     materialized='incremental',
     unique_key=['file', 'REGIONID', 'SETTLEMENTDATE','INTERVENTION'],
     incremental_strategy='delete+insert',
-    pre_hook="SET VARIABLE price_daily_paths = (SELECT COALESCE(NULLIF(list(file), []), ['']) FROM glob('{{ get_csv_archive_path() }}/daily/*.gz'))"
+    pre_hook="{{ unprocessed_daily_paths('price_daily_paths', 'daily', this) }}"
 ) }}
 
 {%- set check_files_query -%}
