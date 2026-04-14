@@ -8,7 +8,14 @@
 ) }}
 
 {%- set check_files_query -%}
+{% if is_incremental() %}
+SELECT COUNT(*) as cnt
+FROM {{ ref('stg_csv_archive_log') }}
+WHERE source_type = 'daily'
+  AND csv_filename NOT IN (SELECT DISTINCT file FROM {{ this }})
+{% else %}
 SELECT COUNT(*) as cnt FROM glob('{{ get_csv_archive_path() }}/daily/*.gz')
+{% endif %}
 {%- endset -%}
 
 {%- set files_result = run_query(check_files_query) -%}
